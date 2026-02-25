@@ -1,0 +1,10 @@
+scope: project
+activation: always
+name: build
+content: Build with ./build-all.sh
+id: '4c837b8e-8eea-49a9-8353-5e54229edc96'
+project: _user
+source_format: cursor
+created_at: '2026-02-25T19:26:33.786005+00:00'
+updated_at: '2026-02-25T19:26:33.786005+00:00'
+store_version: '1'
