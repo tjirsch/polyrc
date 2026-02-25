@@ -1,5 +1,4 @@
 pub mod manifest;
-pub mod merge;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -8,7 +7,6 @@ use walkdir::WalkDir;
 use crate::error::{PolyrcError, Result};
 use crate::ir::Rule;
 pub use manifest::Manifest;
-pub use merge::{merge_rules, MergeResult};
 
 const RULES_DIR: &str = "rules";
 const USER_PROJECT: &str = "_user";
@@ -17,7 +15,6 @@ const USER_PROJECT: &str = "_user";
 pub struct Store {
     /// Root of the store git repo (~/.polyrc/store or user-configured).
     pub path: PathBuf,
-    pub manifest: Manifest,
 }
 
 impl Store {
@@ -27,8 +24,8 @@ impl Store {
         if !manifest_path.exists() {
             return Err(PolyrcError::StoreNotFound);
         }
-        let manifest = Manifest::load(path)?;
-        Ok(Self { path: path.to_path_buf(), manifest })
+        Manifest::load(path)?;
+        Ok(Self { path: path.to_path_buf() })
     }
 
     /// Load all rules for a given project key from the store.

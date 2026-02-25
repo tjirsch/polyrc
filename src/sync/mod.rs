@@ -71,30 +71,3 @@ pub fn git_pull(store_path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Add a remote to the store repo.
-pub fn git_add_remote(store_path: &Path, url: &str) -> Result<()> {
-    // Remove existing origin if present, ignore error
-    let _ = run_git(&["remote", "remove", "origin"], store_path);
-    run_git(&["remote", "add", "origin", url], store_path)?;
-    Ok(())
-}
-
-/// Return a human-readable git status string.
-pub fn git_status(store_path: &Path) -> Result<String> {
-    let branch = run_git(&["branch", "--show-current"], store_path).unwrap_or_else(|_| "unknown".to_string());
-    let status = run_git(&["status", "--short"], store_path).unwrap_or_default();
-    let log = run_git(
-        &["log", "--oneline", "-5"],
-        store_path,
-    ).unwrap_or_else(|_| "(no commits yet)".to_string());
-
-    let remote_info = run_git(
-        &["status", "--short", "--branch"],
-        store_path,
-    ).unwrap_or_default();
-
-    Ok(format!(
-        "Branch: {branch}\n\nRecent commits:\n{log}\n\nWorking tree:\n{}\n\n{remote_info}",
-        if status.is_empty() { "(clean)".to_string() } else { status }
-    ))
-}

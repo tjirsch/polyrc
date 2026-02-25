@@ -54,10 +54,6 @@ impl Manifest {
         std::fs::write(&path, content).map_err(|e| PolyrcError::Io { path, source: e })
     }
 
-    pub fn remote_url(&self) -> Option<&str> {
-        self.remote.url.as_deref()
-    }
-
     pub fn set_remote_url(&mut self, url: impl Into<String>) {
         self.remote.url = Some(url.into());
     }

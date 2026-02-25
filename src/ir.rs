@@ -79,10 +79,6 @@ impl Rule {
         }
     }
 
-    /// Returns true if this rule has been assigned a store identity.
-    pub fn has_store_id(&self) -> bool {
-        !self.id.is_empty()
-    }
 }
 
 pub(crate) fn sanitize_filename(name: &str) -> String {
@@ -141,9 +137,4 @@ mod tests {
         assert!(stem1.starts_with("rule_"));
     }
 
-    #[test]
-    fn has_store_id_false_for_new_rule() {
-        let rule = make_rule(Some("test"), "content");
-        assert!(!rule.has_store_id());
-    }
 }

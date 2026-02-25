@@ -1,0 +1,28 @@
+name: Prune Releases
+
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+
+jobs:
+  prune:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Delete releases beyond the 5 most recent
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh release list --repo "$REPO" --limit 100 --json tagName \
+            --jq '.[5:][].tagName' \
+          | xargs -r -I{} gh release delete {} \
+              --repo "$REPO" \
+              --yes \
+              --cleanup-tag

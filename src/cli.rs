@@ -38,6 +38,15 @@ pub enum Commands {
 
     /// Manage projects in the store
     Project(ProjectArgs),
+
+    /// Generate shell completion script
+    Completion {
+        /// Shell to generate completions for: bash, zsh, fish, powershell
+        shell: String,
+        /// Install the completion script to the default location for the shell
+        #[arg(long)]
+        install: bool,
+    },
 }
 
 // ── convert ──────────────────────────────────────────────────────────────────

@@ -27,8 +27,95 @@ fn main() -> anyhow::Result<()> {
         cli::Commands::PushStore => commands::push_store()?,
         cli::Commands::PullStore => commands::pull_store()?,
         cli::Commands::Project(a) => commands::project(a)?,
+        cli::Commands::Completion { shell, install } => {
+            run_completion(&shell, install)
+                .with_context(|| format!("failed to generate completion for '{shell}'"))?;
+        }
     }
     Ok(())
+}
+
+fn run_completion(shell_str: &str, install: bool) -> anyhow::Result<()> {
+    use clap::CommandFactory;
+    use clap_complete::{generate, Shell};
+    use std::str::FromStr;
+
+    let shell = Shell::from_str(shell_str).map_err(|_| {
+        anyhow::anyhow!(
+            "Unknown shell '{}'. Supported shells: bash, zsh, fish, powershell",
+            shell_str
+        )
+    })?;
+
+    let mut cmd = cli::Cli::command();
+    let bin_name = "polyrc";
+
+    if install {
+        let (path, post_install_msg) = completion_install_path(shell)?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut file = std::fs::File::create(&path)?;
+        generate(shell, &mut cmd, bin_name, &mut file);
+        println!("Completion script installed to: {}", path.display());
+        if let Some(msg) = post_install_msg {
+            println!("{}", msg);
+        }
+    } else {
+        generate(shell, &mut cmd, bin_name, &mut std::io::stdout());
+    }
+
+    Ok(())
+}
+
+fn completion_install_path(shell: clap_complete::Shell) -> anyhow::Result<(std::path::PathBuf, Option<String>)> {
+    use clap_complete::Shell;
+    use std::path::PathBuf;
+
+    let home = std::env::var("HOME").unwrap_or_else(|_| "~".to_string());
+
+    let (path, msg): (PathBuf, Option<String>) = match shell {
+        Shell::Bash => (
+            PathBuf::from(format!(
+                "{}/.local/share/bash-completion/completions/polyrc",
+                home
+            )),
+            Some(
+                "Ensure bash-completion is installed and sourced in your ~/.bashrc".to_string(),
+            ),
+        ),
+        Shell::Zsh => (
+            PathBuf::from(format!("{}/.zsh/completions/_polyrc", home)),
+            Some(
+                "Ensure ~/.zsh/completions is in your fpath — add to ~/.zshrc:\n  fpath=(~/.zsh/completions $fpath)\n  autoload -Uz compinit && compinit"
+                    .to_string(),
+            ),
+        ),
+        Shell::Fish => (
+            PathBuf::from(format!(
+                "{}/.config/fish/completions/polyrc.fish",
+                home
+            )),
+            None,
+        ),
+        Shell::PowerShell => {
+            let userprofile =
+                std::env::var("USERPROFILE").unwrap_or_else(|_| home.clone());
+            (
+                PathBuf::from(format!(
+                    r"{}\Documents\PowerShell\Completions\polyrc.ps1",
+                    userprofile
+                )),
+                Some(
+                    "Add to your $PROFILE:\n  . \"$env:USERPROFILE\\Documents\\PowerShell\\Completions\\polyrc.ps1\""
+                        .to_string(),
+                ),
+            )
+        }
+        _ => anyhow::bail!("Unsupported shell: {:?}", shell),
+    };
+
+    Ok((path, msg))
 }
 
 mod commands {

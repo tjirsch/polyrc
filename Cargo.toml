@@ -13,8 +13,22 @@ categories = ["command-line-utilities", "development-tools"]
 name = "polyrc"
 path = "src/main.rs"
 
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+opt-level = "z"          # optimize for size (vs "s" which is slightly less aggressive)
+lto = true               # full LTO — more effective than "thin" for size
+codegen-units = 1        # single codegen unit enables better dead code elimination
+strip = true             # strip symbols and debug info from the binary
+panic = "abort"          # removes unwinding machinery (~50-100KB)
+
+
+[workspace]
+members = ["xtask"]
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4.5"
 serde = { version = "1", features = ["derive"] }
 serde_yml = "0"
 anyhow = "1"

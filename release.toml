@@ -1,0 +1,6 @@
+sign-commit = false
+sign-tag = false
+push = true
+publish = false
+pre-release-commit-message = "version bump"
+tag-message = ""
