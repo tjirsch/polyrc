@@ -1,0 +1,16 @@
+[package]
+name = "polyrc"
+version = "0.1.0"
+edition = "2024"
+description = "Convert AI coding agent configurations between tools (Cursor, Windsurf, Claude Code, Copilot, etc.)"
+license = "MIT"
+repository = "https://github.com/tjirsch/polyrc"
+readme = "README.md"
+keywords = ["ai", "cursor", "claude", "config", "codegen"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "polyrc"
+path = "src/main.rs"
+
+[dependencies]
