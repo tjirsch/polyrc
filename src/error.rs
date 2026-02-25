@@ -30,4 +30,20 @@ pub enum PolyrcError {
 
     #[error("Cannot write to {path}: {reason}")]
     WriteFailure { path: PathBuf, reason: String },
+
+    #[error("Store not found. Run `polyrc init` first.")]
+    StoreNotFound,
+
+    #[error("Git error: {msg}")]
+    GitError { msg: String },
+
+    #[error("Config error: {msg}")]
+    ConfigError { msg: String },
+
+    #[error("TOML parse error in {path}: {source}")]
+    TomlParse {
+        path: PathBuf,
+        #[source]
+        source: toml::de::Error,
+    },
 }

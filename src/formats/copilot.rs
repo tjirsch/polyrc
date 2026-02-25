@@ -59,6 +59,7 @@ impl Parser for CopilotParser {
                     name: Some("copilot-instructions".to_string()),
                     description: None,
                     content: content.trim_end().to_string(),
+                    ..Default::default()
                 });
             }
         }
@@ -116,6 +117,7 @@ impl Parser for CopilotParser {
                     name: Some(name),
                     description: fm.description,
                     content: body.trim_end().to_string(),
+                    ..Default::default()
                 });
             }
         }

@@ -44,6 +44,7 @@ impl Parser for WindsurfParser {
                 name: Some(name),
                 description: None,
                 content: content.trim_end().to_string(),
+                ..Default::default()
             });
         }
         Ok(rules)

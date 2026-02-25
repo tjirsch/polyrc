@@ -28,6 +28,7 @@ impl Parser for ClaudeParser {
                     name: Some("claude".to_string()),
                     description: None,
                     content: content.trim_end().to_string(),
+                    ..Default::default()
                 });
             }
         }
@@ -60,6 +61,7 @@ impl Parser for ClaudeParser {
                     name: Some(name),
                     description: None,
                     content: content.trim_end().to_string(),
+                    ..Default::default()
                 });
             }
         }

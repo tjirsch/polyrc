@@ -49,6 +49,7 @@ impl Parser for AntigravityParser {
                 name: Some(name),
                 description: None,
                 content: content.trim_end().to_string(),
+                ..Default::default()
             });
         }
         Ok(rules)

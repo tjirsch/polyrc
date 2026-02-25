@@ -28,6 +28,7 @@ impl Parser for GeminiParser {
             name: Some("gemini".to_string()),
             description: None,
             content: content.trim_end().to_string(),
+            ..Default::default()
         }])
     }
 }

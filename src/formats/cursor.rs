@@ -104,6 +104,7 @@ impl Parser for CursorParser {
                 name: Some(stem),
                 description: fm.description,
                 content: body.trim_end().to_string(),
+                ..Default::default()
             });
         }
         Ok(rules)
