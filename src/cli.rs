@@ -61,11 +61,9 @@ pub enum Commands {
     /// Load IR from store → write as local format
     PullFormat(PullFormatArgs),
 
-    /// Push local store commits to the central remote repo
-    PushStore,
-
-    /// Pull from central remote repo into local store (with IR-level merge)
-    PullStore,
+    /// Sync local store with the remote git repo (pull then push)
+    #[command(name = "sync-store", alias = "push-store", alias = "pull-store")]
+    SyncStore,
 
     /// Manage projects in the store
     Project(ProjectArgs),

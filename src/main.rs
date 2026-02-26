@@ -31,8 +31,7 @@ fn main() -> anyhow::Result<()> {
         cli::Commands::Init(a) => commands::init(a)?,
         cli::Commands::PushFormat(a) => commands::push_format(a)?,
         cli::Commands::PullFormat(a) => commands::pull_format(a)?,
-        cli::Commands::PushStore => commands::push_store()?,
-        cli::Commands::PullStore => commands::pull_store()?,
+        cli::Commands::SyncStore => commands::sync_store()?,
         cli::Commands::ListStore(a) => commands::list_store(a)?,
         cli::Commands::Project(a) => commands::project(a)?,
         cli::Commands::Completion { shell, install } => {
@@ -248,34 +247,28 @@ mod commands {
         Ok(())
     }
 
-    pub fn push_store() -> anyhow::Result<()> {
-        let config = Config::load()?;
-        let store_path = config.store_path();
-        Store::open(&store_path).context("store not initialized")?;
-        println!("Pushing store to remote...");
-        sync::git_push(&store_path).context("git push failed")?;
-        println!("Done.");
-        Ok(())
-    }
-
-    pub fn pull_store() -> anyhow::Result<()> {
+    pub fn sync_store() -> anyhow::Result<()> {
         let config = Config::load()?;
         let store_path = config.store_path();
         let store = Store::open(&store_path).context("store not initialized")?;
 
+        // 1. Pull remote changes in first
         println!("Pulling from remote...");
         sync::git_pull(&store_path).context("git pull failed")?;
 
-        // Run IR-level merge for each project
+        // Re-save all projects after pull to normalise IDs and metadata
         for project in store.list_projects()? {
-            let local = store.load_rules(Some(&project))?;
-            // After git pull, files on disk ARE the merged state (git already merged).
-            // Re-read and re-save to ensure IDs and metadata are consistent.
-            if !local.is_empty() {
-                let _ = store.save_rules(Some(&project), &local, "pull-store");
+            let rules = store.load_rules(Some(&project))?;
+            if !rules.is_empty() {
+                let _ = store.save_rules(Some(&project), &rules, "sync-store");
             }
         }
         println!("Pull complete.");
+
+        // 2. Push local commits to remote
+        println!("Pushing to remote...");
+        sync::git_push(&store_path).context("git push failed")?;
+        println!("Sync complete.");
         Ok(())
     }
 
