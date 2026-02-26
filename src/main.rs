@@ -33,6 +33,7 @@ fn main() -> anyhow::Result<()> {
         cli::Commands::PullFormat(a) => commands::pull_format(a)?,
         cli::Commands::PushStore => commands::push_store()?,
         cli::Commands::PullStore => commands::pull_store()?,
+        cli::Commands::ListStore(a) => commands::list_store(a)?,
         cli::Commands::Project(a) => commands::project(a)?,
         cli::Commands::Completion { shell, install } => {
             run_completion(&shell, install)
@@ -127,7 +128,7 @@ fn completion_install_path(shell: clap_complete::Shell) -> anyhow::Result<(std::
 
 mod commands {
     use anyhow::Context;
-    use crate::cli::{InitArgs, ProjectArgs, ProjectCommands, PullFormatArgs, PushFormatArgs, SetEditorArgs};
+    use crate::cli::{InitArgs, ListStoreArgs, ProjectArgs, ProjectCommands, PullFormatArgs, PushFormatArgs, SetEditorArgs};
     use crate::config::Config;
     use crate::formats::Format;
     use crate::ir::Scope;
@@ -303,6 +304,79 @@ mod commands {
                 println!("Renamed '{}' → '{}' and committed.", old_name, new_name);
             }
         }
+        Ok(())
+    }
+
+    pub fn list_store(args: ListStoreArgs) -> anyhow::Result<()> {
+        let config = Config::load()?;
+        let store_path = config.store_path();
+        let store = Store::open(&store_path).context("store not initialized — run `polyrc init` first")?;
+
+        // Determine which project keys to show.
+        let all_projects = store.list_projects()?;
+        let keys: Vec<String> = if args.user {
+            vec!["_user".to_string()]
+        } else if let Some(ref p) = args.project {
+            vec![p.clone()]
+        } else {
+            all_projects
+        };
+
+        let fmt_filter = args.format.as_ref().map(|f| f.as_str());
+        let mut grand_total = 0usize;
+
+        for key in &keys {
+            // load_rules takes Option<&str>; None maps to _user dir
+            let project_arg = if key == "_user" { None } else { Some(key.as_str()) };
+            let mut rules = store.load_rules(project_arg)?;
+
+            // Apply --format filter.
+            if let Some(fmt) = fmt_filter {
+                rules.retain(|r| r.source_format.as_deref() == Some(fmt));
+            }
+
+            if rules.is_empty() {
+                continue;
+            }
+
+            grand_total += rules.len();
+            let label = if key == "_user" { "_user (user-scope)".to_string() } else { key.clone() };
+            println!("\n{} — {} rule(s):", label, rules.len());
+            println!("{}", "─".repeat(60));
+
+            for rule in &rules {
+                let name = rule.name.as_deref().unwrap_or("<unnamed>");
+                let fmt_tag = rule.source_format.as_deref().unwrap_or("?");
+                let scope_tag = format!("{:?}", rule.scope).to_lowercase();
+                let activation_tag = format!("{:?}", rule.activation).to_lowercase();
+                let updated = rule.updated_at.as_deref().unwrap_or("?");
+                let date = updated.get(..10).unwrap_or(updated); // trim to YYYY-MM-DD
+
+                println!(
+                    "  {:<30} [{:<10}] {}/{:<10} {}",
+                    name, fmt_tag, scope_tag, activation_tag, date
+                );
+
+                if args.verbose {
+                    let preview_len = rule.content.len().min(300);
+                    let preview = &rule.content[..preview_len];
+                    for line in preview.lines().take(6) {
+                        println!("      {}", line);
+                    }
+                    if rule.content.len() > 300 || rule.content.lines().count() > 6 {
+                        println!("      … ({} chars total)", rule.content.len());
+                    }
+                    println!();
+                }
+            }
+        }
+
+        if grand_total == 0 {
+            println!("No rules found in the store matching the given filters.");
+        } else {
+            println!("\nTotal: {} rule(s)", grand_total);
+        }
+
         Ok(())
     }
 

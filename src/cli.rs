@@ -70,6 +70,10 @@ pub enum Commands {
     /// Manage projects in the store
     Project(ProjectArgs),
 
+    /// List rules in the store, with optional filters
+    #[command(name = "list-store")]
+    ListStore(ListStoreArgs),
+
     /// Discover installed user-level configs for all (or one) format
     Discover(DiscoverArgs),
 
@@ -229,6 +233,27 @@ pub struct SetEditorArgs {
     /// Clear the preferred_editor setting (revert to $EDITOR / OS default)
     #[arg(long)]
     pub clear: bool,
+}
+
+// ── list-store ────────────────────────────────────────────────────────────────
+
+#[derive(clap::Args, Debug)]
+pub struct ListStoreArgs {
+    /// Only show user-scope rules (project key = _user)
+    #[arg(long, conflicts_with = "project")]
+    pub user: bool,
+
+    /// Only show rules in this project
+    #[arg(long)]
+    pub project: Option<String>,
+
+    /// Only show rules whose source format matches (e.g. claude, cursor)
+    #[arg(long, value_enum)]
+    pub format: Option<FormatArg>,
+
+    /// Show full rule content instead of a one-line summary
+    #[arg(long)]
+    pub verbose: bool,
 }
 
 // ── discover ──────────────────────────────────────────────────────────────────
