@@ -4,6 +4,7 @@ use clap::Parser as ClapParser;
 mod cli;
 mod config;
 mod convert;
+mod discover;
 mod error;
 mod formats;
 mod ir;
@@ -16,6 +17,7 @@ fn main() -> anyhow::Result<()> {
     let args = cli::Cli::parse();
     match args.command {
         cli::Commands::Convert(a) => convert::run(a).context("conversion failed")?,
+        cli::Commands::Discover(a) => discover::run(a).context("discover failed")?,
         cli::Commands::ListFormats => {
             for fmt in formats::Format::all() {
                 println!("{:<15} {}", fmt.name(), fmt.description());
