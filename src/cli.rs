@@ -42,6 +42,12 @@ pub enum Commands {
     /// Discover installed user-level configs for all (or one) format
     Discover(DiscoverArgs),
 
+    /// Update polyrc to the latest release from GitHub
+    SelfUpdate(SelfUpdateArgs),
+
+    /// Get or set the preferred editor (used when opening files)
+    SetEditor(SetEditorArgs),
+
     /// Generate shell completion script
     Completion {
         /// Shell to generate completions for: bash, zsh, fish, powershell
@@ -167,6 +173,31 @@ pub enum ProjectCommands {
         /// New project name
         new_name: String,
     },
+}
+
+// ── self-update ───────────────────────────────────────────────────────────────
+
+#[derive(clap::Args, Debug)]
+pub struct SelfUpdateArgs {
+    /// Check for an update but do not install it
+    #[arg(long)]
+    pub check_only: bool,
+
+    /// Install even if no SHA-256 checksum sidecar is found in the release
+    #[arg(long)]
+    pub skip_checksum: bool,
+}
+
+// ── set-editor ────────────────────────────────────────────────────────────────
+
+#[derive(clap::Args, Debug)]
+pub struct SetEditorArgs {
+    /// Editor command to use (e.g. "code", "zed", "vim"). Omit to show current value.
+    pub editor: Option<String>,
+
+    /// Clear the preferred_editor setting (revert to $EDITOR / OS default)
+    #[arg(long)]
+    pub clear: bool,
 }
 
 // ── discover ──────────────────────────────────────────────────────────────────

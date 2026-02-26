@@ -6,6 +6,7 @@ mod config;
 mod convert;
 mod discover;
 mod error;
+mod self_update;
 mod formats;
 mod ir;
 mod parser;
@@ -18,6 +19,10 @@ fn main() -> anyhow::Result<()> {
     match args.command {
         cli::Commands::Convert(a) => convert::run(a).context("conversion failed")?,
         cli::Commands::Discover(a) => discover::run(a).context("discover failed")?,
+        cli::Commands::SelfUpdate(a) => {
+            self_update::run(a.check_only, a.skip_checksum).context("self-update failed")?
+        }
+        cli::Commands::SetEditor(a) => commands::set_editor(a)?,
         cli::Commands::ListFormats => {
             for fmt in formats::Format::all() {
                 println!("{:<15} {}", fmt.name(), fmt.description());
@@ -122,7 +127,7 @@ fn completion_install_path(shell: clap_complete::Shell) -> anyhow::Result<(std::
 
 mod commands {
     use anyhow::Context;
-    use crate::cli::{InitArgs, ProjectArgs, ProjectCommands, PullFormatArgs, PushFormatArgs};
+    use crate::cli::{InitArgs, ProjectArgs, ProjectCommands, PullFormatArgs, PushFormatArgs, SetEditorArgs};
     use crate::config::Config;
     use crate::formats::Format;
     use crate::ir::Scope;
@@ -294,6 +299,25 @@ mod commands {
                 let msg = format!("rename project {} → {}", old_name, new_name);
                 sync::git_commit(&store_path, &msg)?;
                 println!("Renamed '{}' → '{}' and committed.", old_name, new_name);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn set_editor(args: SetEditorArgs) -> anyhow::Result<()> {
+        let mut config = Config::load()?;
+        if args.clear {
+            config.preferred_editor = None;
+            config.save().map_err(|e| anyhow::anyhow!("{}", e))?;
+            println!("preferred_editor cleared (falls back to $EDITOR / OS default).");
+        } else if let Some(editor) = args.editor {
+            config.preferred_editor = Some(editor.clone());
+            config.save().map_err(|e| anyhow::anyhow!("{}", e))?;
+            println!("preferred_editor set to \"{}\".", editor);
+        } else {
+            match &config.preferred_editor {
+                Some(e) => println!("preferred_editor = \"{}\"", e),
+                None => println!("preferred_editor is not set (using $EDITOR / OS default)."),
             }
         }
         Ok(())
