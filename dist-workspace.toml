@@ -14,4 +14,4 @@ targets = [
 install-path = "~/.local/bin"
 hosting = "github"
 install-updater = false
-allow-dirty = ["github-ci"]
+allow-dirty = ["ci"]
