@@ -30,32 +30,62 @@ pub fn user_locations(fmt: &Format) -> Vec<UserLocation> {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("~"));
 
     match fmt {
-        Format::Claude => vec![
-            // Main memory / instruction file
-            UserLocation::File {
-                path: home.join(".claude/CLAUDE.md"),
-                note: None,
-            },
-            // Modular always-on rules
-            UserLocation::Dir {
-                path: home.join(".claude/rules"),
-                extension: "md",
-            },
-            // Legacy slash-command files (still fully supported)
-            UserLocation::Dir {
-                path: home.join(".claude/commands"),
-                extension: "md",
-            },
-            // Modern skills (each skill is a subdirectory containing SKILL.md)
-            UserLocation::SkillDir {
-                path: home.join(".claude/skills"),
-            },
-            // Subagent definitions
-            UserLocation::Dir {
-                path: home.join(".claude/agents"),
-                extension: "md",
-            },
-        ],
+        Format::Claude => {
+            // The config dir can be overridden via CLAUDE_CONFIG_DIR; fall back to ~/.claude
+            let claude_dir = std::env::var("CLAUDE_CONFIG_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| home.join(".claude"));
+
+            // Managed/system-level settings path varies by OS
+            #[cfg(target_os = "macos")]
+            let managed = PathBuf::from("/Library/Application Support/ClaudeCode/managed-settings.json");
+            #[cfg(target_os = "linux")]
+            let managed = PathBuf::from("/etc/claude-code/managed-settings.json");
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            let managed = PathBuf::from("C:\\Program Files\\ClaudeCode\\managed-settings.json");
+
+            vec![
+                // Global user config (outside ~/.claude/) — auth, theme, per-project state
+                UserLocation::File {
+                    path: home.join(".claude.json"),
+                    note: Some("global user config — auth, theme, per-project state"),
+                },
+                // User settings (permissions, model, env, hooks, …)
+                UserLocation::File {
+                    path: claude_dir.join("settings.json"),
+                    note: Some("user settings — permissions, model, env, hooks"),
+                },
+                // Main memory / instruction file
+                UserLocation::File {
+                    path: claude_dir.join("CLAUDE.md"),
+                    note: None,
+                },
+                // Modular always-on rules
+                UserLocation::Dir {
+                    path: claude_dir.join("rules"),
+                    extension: "md",
+                },
+                // Slash-command files (on-demand)
+                UserLocation::Dir {
+                    path: claude_dir.join("commands"),
+                    extension: "md",
+                },
+                // Modern skills (each skill is a subdirectory containing SKILL.md)
+                UserLocation::SkillDir {
+                    path: claude_dir.join("skills"),
+                },
+                // Subagent definitions
+                UserLocation::Dir {
+                    path: claude_dir.join("agents"),
+                    extension: "md",
+                },
+                // Managed settings (org/MDM — cannot be overridden)
+                UserLocation::File {
+                    path: managed,
+                    note: Some("managed settings — org/MDM enforced, cannot be overridden"),
+                },
+            ]
+        }
 
         Format::Gemini => vec![UserLocation::File {
             path: home.join(".gemini/GEMINI.md"),
