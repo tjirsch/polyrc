@@ -1,6 +1,36 @@
 use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
+// ── format enum ───────────────────────────────────────────────────────────────
+
+/// Canonical format names — drives tab-completion for all --format / --from / --to args.
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub enum FormatArg {
+    Cursor,
+    Windsurf,
+    #[value(alias = "github-copilot", alias = "ghcopilot")]
+    Copilot,
+    #[value(alias = "claude-code")]
+    Claude,
+    #[value(alias = "gemini-cli")]
+    Gemini,
+    #[value(alias = "google-antigravity")]
+    Antigravity,
+}
+
+impl FormatArg {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Cursor => "cursor",
+            Self::Windsurf => "windsurf",
+            Self::Copilot => "copilot",
+            Self::Claude => "claude",
+            Self::Gemini => "gemini",
+            Self::Antigravity => "antigravity",
+        }
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(
     name = "polyrc",
@@ -42,6 +72,12 @@ pub enum Commands {
     /// Discover installed user-level configs for all (or one) format
     Discover(DiscoverArgs),
 
+    /// Update polyrc to the latest release from GitHub
+    SelfUpdate(SelfUpdateArgs),
+
+    /// Get or set the preferred editor (used when opening files)
+    SetEditor(SetEditorArgs),
+
     /// Generate shell completion script
     Completion {
         /// Shell to generate completions for: bash, zsh, fish, powershell
@@ -56,13 +92,13 @@ pub enum Commands {
 
 #[derive(clap::Args, Debug)]
 pub struct ConvertArgs {
-    /// Source format (cursor, windsurf, copilot, claude, gemini, antigravity)
-    #[arg(long)]
-    pub from: String,
+    /// Source format
+    #[arg(long, value_enum)]
+    pub from: FormatArg,
 
     /// Target format
-    #[arg(long)]
-    pub to: String,
+    #[arg(long, value_enum)]
+    pub to: FormatArg,
 
     /// Project name in the store. When set, conversion goes through the store.
     #[arg(long)]
@@ -102,9 +138,9 @@ pub struct InitArgs {
 
 #[derive(clap::Args, Debug)]
 pub struct PushFormatArgs {
-    /// Format to read from (cursor, windsurf, copilot, claude, gemini, antigravity)
-    #[arg(long)]
-    pub format: String,
+    /// Format to read from
+    #[arg(long, value_enum)]
+    pub format: FormatArg,
 
     /// Project name to store rules under
     #[arg(long)]
@@ -127,9 +163,9 @@ pub struct PushFormatArgs {
 
 #[derive(clap::Args, Debug)]
 pub struct PullFormatArgs {
-    /// Format to write (cursor, windsurf, copilot, claude, gemini, antigravity)
-    #[arg(long)]
-    pub format: String,
+    /// Format to write
+    #[arg(long, value_enum)]
+    pub format: FormatArg,
 
     /// Project name to load rules from
     #[arg(long)]
@@ -169,6 +205,31 @@ pub enum ProjectCommands {
     },
 }
 
+// ── self-update ───────────────────────────────────────────────────────────────
+
+#[derive(clap::Args, Debug)]
+pub struct SelfUpdateArgs {
+    /// Check for an update but do not install it
+    #[arg(long)]
+    pub check_only: bool,
+
+    /// Install even if no SHA-256 checksum sidecar is found in the release
+    #[arg(long)]
+    pub skip_checksum: bool,
+}
+
+// ── set-editor ────────────────────────────────────────────────────────────────
+
+#[derive(clap::Args, Debug)]
+pub struct SetEditorArgs {
+    /// Editor command to use (e.g. "code", "zed", "vim"). Omit to show current value.
+    pub editor: Option<String>,
+
+    /// Clear the preferred_editor setting (revert to $EDITOR / OS default)
+    #[arg(long)]
+    pub clear: bool,
+}
+
 // ── discover ──────────────────────────────────────────────────────────────────
 
 #[derive(clap::Args, Debug)]
@@ -177,7 +238,7 @@ pub struct DiscoverArgs {
     #[arg(long)]
     pub user: bool,
 
-    /// Only scan for this format (cursor, windsurf, copilot, claude, gemini, antigravity)
-    #[arg(long)]
-    pub format: Option<String>,
+    /// Limit to one format
+    #[arg(long, value_enum)]
+    pub format: Option<FormatArg>,
 }

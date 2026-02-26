@@ -6,6 +6,11 @@ use crate::error::{PolyrcError, Result};
 pub struct Config {
     #[serde(default)]
     pub store: StoreConfig,
+
+    /// Preferred editor command (e.g. "code", "zed", "vim").
+    /// Falls back to $EDITOR env var, then OS default, when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preferred_editor: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -15,8 +15,10 @@ pub enum UserLocation {
         /// Extra context shown after the status (e.g. "edit via Settings UI").
         note: Option<&'static str>,
     },
-    /// A directory whose matching files are the config.
+    /// A flat directory whose direct *.ext children are config files.
     Dir { path: PathBuf, extension: &'static str },
+    /// A directory where each subdirectory may contain a SKILL.md (Claude skills layout).
+    SkillDir { path: PathBuf },
     /// Stored in a web / app UI — no local file to scan.
     WebUi { hint: &'static str },
 }
@@ -28,16 +30,62 @@ pub fn user_locations(fmt: &Format) -> Vec<UserLocation> {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("~"));
 
     match fmt {
-        Format::Claude => vec![
-            UserLocation::File {
-                path: home.join(".claude/CLAUDE.md"),
-                note: None,
-            },
-            UserLocation::Dir {
-                path: home.join(".claude/rules"),
-                extension: "md",
-            },
-        ],
+        Format::Claude => {
+            // The config dir can be overridden via CLAUDE_CONFIG_DIR; fall back to ~/.claude
+            let claude_dir = std::env::var("CLAUDE_CONFIG_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| home.join(".claude"));
+
+            // Managed/system-level settings path varies by OS
+            #[cfg(target_os = "macos")]
+            let managed = PathBuf::from("/Library/Application Support/ClaudeCode/managed-settings.json");
+            #[cfg(target_os = "linux")]
+            let managed = PathBuf::from("/etc/claude-code/managed-settings.json");
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            let managed = PathBuf::from("C:\\Program Files\\ClaudeCode\\managed-settings.json");
+
+            vec![
+                // Global user config (outside ~/.claude/) — auth, theme, per-project state
+                UserLocation::File {
+                    path: home.join(".claude.json"),
+                    note: Some("global user config — auth, theme, per-project state"),
+                },
+                // User settings (permissions, model, env, hooks, …)
+                UserLocation::File {
+                    path: claude_dir.join("settings.json"),
+                    note: Some("user settings — permissions, model, env, hooks"),
+                },
+                // Main memory / instruction file
+                UserLocation::File {
+                    path: claude_dir.join("CLAUDE.md"),
+                    note: None,
+                },
+                // Modular always-on rules
+                UserLocation::Dir {
+                    path: claude_dir.join("rules"),
+                    extension: "md",
+                },
+                // Slash-command files (on-demand)
+                UserLocation::Dir {
+                    path: claude_dir.join("commands"),
+                    extension: "md",
+                },
+                // Modern skills (each skill is a subdirectory containing SKILL.md)
+                UserLocation::SkillDir {
+                    path: claude_dir.join("skills"),
+                },
+                // Subagent definitions
+                UserLocation::Dir {
+                    path: claude_dir.join("agents"),
+                    extension: "md",
+                },
+                // Managed settings (org/MDM — cannot be overridden)
+                UserLocation::File {
+                    path: managed,
+                    note: Some("managed settings — org/MDM enforced, cannot be overridden"),
+                },
+            ]
+        }
 
         Format::Gemini => vec![UserLocation::File {
             path: home.join(".gemini/GEMINI.md"),
@@ -56,7 +104,6 @@ pub fn user_locations(fmt: &Format) -> Vec<UserLocation> {
 
         Format::Cursor => {
             // User rules live inside the VS Code–style settings JSON, not a standalone file.
-            // We report the file's presence but can't extract the rules without JSON parsing.
             let settings = dirs::config_dir()
                 .unwrap_or_else(|| home.join("Library/Application Support"))
                 .join("Cursor/User/settings.json");
@@ -82,8 +129,8 @@ pub fn run(args: DiscoverArgs) -> Result<()> {
         );
     }
 
-    let formats: Vec<Format> = if let Some(ref fmt_str) = args.format {
-        let fmt = Format::from_str(fmt_str)
+    let formats: Vec<Format> = if let Some(ref fmt_arg) = args.format {
+        let fmt = Format::from_str(fmt_arg.as_str())
             .map_err(|e| anyhow::anyhow!("{}", e))?;
         vec![fmt]
     } else {
@@ -155,6 +202,31 @@ fn print_location(loc: &UserLocation) {
             }
         }
 
+        UserLocation::SkillDir { path } => {
+            let display = format!("{}/", tilde(path));
+            if path.exists() {
+                match skill_subdirs(path) {
+                    Ok(skills) if skills.is_empty() => {
+                        println!("    {:<60}  found  (empty)", display);
+                    }
+                    Ok(skills) => {
+                        let names: Vec<_> = skills.iter().map(|s| s.as_str()).collect();
+                        println!(
+                            "    {:<60}  found  ({} skill(s): {})",
+                            display,
+                            names.len(),
+                            names.join(", ")
+                        );
+                    }
+                    Err(_) => {
+                        println!("    {:<60}  found  (unreadable)", display);
+                    }
+                }
+            } else {
+                println!("    {:<60}  not found", display);
+            }
+        }
+
         UserLocation::WebUi { hint } => {
             println!("    web UI  →  {}", hint);
         }
@@ -178,8 +250,20 @@ fn dir_files(dir: &PathBuf, ext: &str) -> Result<Vec<PathBuf>> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some(ext))
+        .filter(|p| p.is_file() && p.extension().and_then(|e| e.to_str()) == Some(ext))
         .collect();
     files.sort();
     Ok(files)
+}
+
+/// Returns names of subdirectories that contain a SKILL.md file.
+fn skill_subdirs(dir: &PathBuf) -> Result<Vec<String>> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .filter(|e| e.path().join("SKILL.md").exists())
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect();
+    names.sort();
+    Ok(names)
 }

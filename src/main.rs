@@ -6,6 +6,7 @@ mod config;
 mod convert;
 mod discover;
 mod error;
+mod self_update;
 mod formats;
 mod ir;
 mod parser;
@@ -18,6 +19,10 @@ fn main() -> anyhow::Result<()> {
     match args.command {
         cli::Commands::Convert(a) => convert::run(a).context("conversion failed")?,
         cli::Commands::Discover(a) => discover::run(a).context("discover failed")?,
+        cli::Commands::SelfUpdate(a) => {
+            self_update::run(a.check_only, a.skip_checksum).context("self-update failed")?
+        }
+        cli::Commands::SetEditor(a) => commands::set_editor(a)?,
         cli::Commands::ListFormats => {
             for fmt in formats::Format::all() {
                 println!("{:<15} {}", fmt.name(), fmt.description());
@@ -122,7 +127,7 @@ fn completion_install_path(shell: clap_complete::Shell) -> anyhow::Result<(std::
 
 mod commands {
     use anyhow::Context;
-    use crate::cli::{InitArgs, ProjectArgs, ProjectCommands, PullFormatArgs, PushFormatArgs};
+    use crate::cli::{InitArgs, ProjectArgs, ProjectCommands, PullFormatArgs, PushFormatArgs, SetEditorArgs};
     use crate::config::Config;
     use crate::formats::Format;
     use crate::ir::Scope;
@@ -166,12 +171,13 @@ mod commands {
         let store_path = config.store_path();
         let store = Store::open(&store_path).context("store not initialized — run `polyrc init` first")?;
 
-        let fmt = Format::from_str(&args.format)
-            .with_context(|| format!("unknown format '{}'", args.format))?;
+        let fmt_name = args.format.as_str();
+        let fmt = Format::from_str(fmt_name)
+            .with_context(|| format!("unknown format '{}'", fmt_name))?;
 
         let parser = fmt.parser();
         let mut rules = parser.parse(&args.input)
-            .with_context(|| format!("failed to parse {} at {:?}", args.format, args.input))?;
+            .with_context(|| format!("failed to parse {} at {:?}", fmt_name, args.input))?;
 
         if let Some(scope_str) = &args.scope {
             let s = parse_scope(scope_str)?;
@@ -186,19 +192,19 @@ mod commands {
         let project_key = project_key(args.project.as_deref(), &args.scope);
 
         if args.dry_run {
-            println!("Dry run: {} rule(s) from {} → store/{}", rules.len(), args.format,
+            println!("Dry run: {} rule(s) from {} → store/{}", rules.len(), fmt_name,
                 project_key.as_deref().unwrap_or("_user"));
             print_rules_preview(&rules);
             return Ok(());
         }
 
-        let stored = store.save_rules(project_key.as_deref(), &rules, &args.format)?;
+        let stored = store.save_rules(project_key.as_deref(), &rules, fmt_name)?;
         println!("Stored {} rule(s) → {}", stored.len(), store_path.display());
 
         // Auto-commit
         let msg = format!(
             "push-format from {} ({})",
-            args.format,
+            fmt_name,
             chrono::Utc::now().format("%Y-%m-%d")
         );
         sync::git_commit(&store_path, &msg).context("git commit failed")?;
@@ -211,8 +217,9 @@ mod commands {
         let store_path = config.store_path();
         let store = Store::open(&store_path).context("store not initialized — run `polyrc init` first")?;
 
-        let fmt = Format::from_str(&args.format)
-            .with_context(|| format!("unknown format '{}'", args.format))?;
+        let fmt_name = args.format.as_str();
+        let fmt = Format::from_str(fmt_name)
+            .with_context(|| format!("unknown format '{}'", fmt_name))?;
 
         let project_key = project_key(args.project.as_deref(), &args.scope);
         let mut rules = store.load_rules(project_key.as_deref())?;
@@ -228,15 +235,15 @@ mod commands {
         }
 
         if args.dry_run {
-            println!("Dry run: {} rule(s) from store → {}", rules.len(), args.format);
+            println!("Dry run: {} rule(s) from store → {}", rules.len(), fmt_name);
             print_rules_preview(&rules);
             return Ok(());
         }
 
         let writer = fmt.writer();
         writer.write(&rules, &args.output)
-            .with_context(|| format!("failed to write {} to {:?}", args.format, args.output))?;
-        println!("Wrote {} rule(s) as {} to {}", rules.len(), args.format, args.output.display());
+            .with_context(|| format!("failed to write {} to {:?}", fmt_name, args.output))?;
+        println!("Wrote {} rule(s) as {} to {}", rules.len(), fmt_name, args.output.display());
         Ok(())
     }
 
@@ -294,6 +301,25 @@ mod commands {
                 let msg = format!("rename project {} → {}", old_name, new_name);
                 sync::git_commit(&store_path, &msg)?;
                 println!("Renamed '{}' → '{}' and committed.", old_name, new_name);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn set_editor(args: SetEditorArgs) -> anyhow::Result<()> {
+        let mut config = Config::load()?;
+        if args.clear {
+            config.preferred_editor = None;
+            config.save().map_err(|e| anyhow::anyhow!("{}", e))?;
+            println!("preferred_editor cleared (falls back to $EDITOR / OS default).");
+        } else if let Some(editor) = args.editor {
+            config.preferred_editor = Some(editor.clone());
+            config.save().map_err(|e| anyhow::anyhow!("{}", e))?;
+            println!("preferred_editor set to \"{}\".", editor);
+        } else {
+            match &config.preferred_editor {
+                Some(e) => println!("preferred_editor = \"{}\"", e),
+                None => println!("preferred_editor is not set (using $EDITOR / OS default)."),
             }
         }
         Ok(())
