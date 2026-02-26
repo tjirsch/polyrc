@@ -171,12 +171,13 @@ mod commands {
         let store_path = config.store_path();
         let store = Store::open(&store_path).context("store not initialized — run `polyrc init` first")?;
 
-        let fmt = Format::from_str(&args.format)
-            .with_context(|| format!("unknown format '{}'", args.format))?;
+        let fmt_name = args.format.as_str();
+        let fmt = Format::from_str(fmt_name)
+            .with_context(|| format!("unknown format '{}'", fmt_name))?;
 
         let parser = fmt.parser();
         let mut rules = parser.parse(&args.input)
-            .with_context(|| format!("failed to parse {} at {:?}", args.format, args.input))?;
+            .with_context(|| format!("failed to parse {} at {:?}", fmt_name, args.input))?;
 
         if let Some(scope_str) = &args.scope {
             let s = parse_scope(scope_str)?;
@@ -191,19 +192,19 @@ mod commands {
         let project_key = project_key(args.project.as_deref(), &args.scope);
 
         if args.dry_run {
-            println!("Dry run: {} rule(s) from {} → store/{}", rules.len(), args.format,
+            println!("Dry run: {} rule(s) from {} → store/{}", rules.len(), fmt_name,
                 project_key.as_deref().unwrap_or("_user"));
             print_rules_preview(&rules);
             return Ok(());
         }
 
-        let stored = store.save_rules(project_key.as_deref(), &rules, &args.format)?;
+        let stored = store.save_rules(project_key.as_deref(), &rules, fmt_name)?;
         println!("Stored {} rule(s) → {}", stored.len(), store_path.display());
 
         // Auto-commit
         let msg = format!(
             "push-format from {} ({})",
-            args.format,
+            fmt_name,
             chrono::Utc::now().format("%Y-%m-%d")
         );
         sync::git_commit(&store_path, &msg).context("git commit failed")?;
@@ -216,8 +217,9 @@ mod commands {
         let store_path = config.store_path();
         let store = Store::open(&store_path).context("store not initialized — run `polyrc init` first")?;
 
-        let fmt = Format::from_str(&args.format)
-            .with_context(|| format!("unknown format '{}'", args.format))?;
+        let fmt_name = args.format.as_str();
+        let fmt = Format::from_str(fmt_name)
+            .with_context(|| format!("unknown format '{}'", fmt_name))?;
 
         let project_key = project_key(args.project.as_deref(), &args.scope);
         let mut rules = store.load_rules(project_key.as_deref())?;
@@ -233,15 +235,15 @@ mod commands {
         }
 
         if args.dry_run {
-            println!("Dry run: {} rule(s) from store → {}", rules.len(), args.format);
+            println!("Dry run: {} rule(s) from store → {}", rules.len(), fmt_name);
             print_rules_preview(&rules);
             return Ok(());
         }
 
         let writer = fmt.writer();
         writer.write(&rules, &args.output)
-            .with_context(|| format!("failed to write {} to {:?}", args.format, args.output))?;
-        println!("Wrote {} rule(s) as {} to {}", rules.len(), args.format, args.output.display());
+            .with_context(|| format!("failed to write {} to {:?}", fmt_name, args.output))?;
+        println!("Wrote {} rule(s) as {} to {}", rules.len(), fmt_name, args.output.display());
         Ok(())
     }
 

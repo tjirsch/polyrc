@@ -82,8 +82,8 @@ pub fn run(args: DiscoverArgs) -> Result<()> {
         );
     }
 
-    let formats: Vec<Format> = if let Some(ref fmt_str) = args.format {
-        let fmt = Format::from_str(fmt_str)
+    let formats: Vec<Format> = if let Some(ref fmt_arg) = args.format {
+        let fmt = Format::from_str(fmt_arg.as_str())
             .map_err(|e| anyhow::anyhow!("{}", e))?;
         vec![fmt]
     } else {

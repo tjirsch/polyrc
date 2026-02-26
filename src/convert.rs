@@ -13,15 +13,18 @@ pub fn run(args: ConvertArgs) -> anyhow::Result<()> {
     }
 
     // Ephemeral convert (no store)
-    let from_format = Format::from_str(&args.from)
-        .with_context(|| format!("invalid --from format '{}'", args.from))?;
-    let to_format = Format::from_str(&args.to)
-        .with_context(|| format!("invalid --to format '{}'", args.to))?;
+    let from_name = args.from.as_str();
+    let to_name = args.to.as_str();
+
+    let from_format = Format::from_str(from_name)
+        .with_context(|| format!("invalid --from format '{}'", from_name))?;
+    let to_format = Format::from_str(to_name)
+        .with_context(|| format!("invalid --to format '{}'", to_name))?;
 
     let parser = from_format.parser();
     let mut rules = parser
         .parse(&args.input)
-        .with_context(|| format!("failed to parse {} config at {:?}", args.from, args.input))?;
+        .with_context(|| format!("failed to parse {} config at {:?}", from_name, args.input))?;
 
     if let Some(scope_str) = &args.scope {
         let target_scope = parse_scope(scope_str)?;
@@ -33,18 +36,13 @@ pub fn run(args: ConvertArgs) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let dry_run = args.dry_run;
-    let from_name = args.from.clone();
-    let to_name = args.to.clone();
-    let output = args.output.clone();
-
-    if dry_run {
+    if args.dry_run {
         println!("Dry run: {} rule(s) from {} → {}", rules.len(), from_name, to_name);
         print_rules_preview(&rules);
     } else {
         let writer = to_format.writer();
-        writer.write(&rules, &output)
-            .with_context(|| format!("failed to write {} config to {:?}", to_name, output))?;
+        writer.write(&rules, &args.output)
+            .with_context(|| format!("failed to write {} config to {:?}", to_name, args.output))?;
         println!("Converted {} rule(s) from {} to {}", rules.len(), from_name, to_name);
     }
     Ok(())
@@ -57,15 +55,18 @@ fn run_via_store(args: ConvertArgs, project: String) -> anyhow::Result<()> {
     let store = Store::open(&store_path)
         .context("store not initialized — run `polyrc init` first")?;
 
-    let from_format = Format::from_str(&args.from)
-        .with_context(|| format!("invalid --from format '{}'", args.from))?;
-    let to_format = Format::from_str(&args.to)
-        .with_context(|| format!("invalid --to format '{}'", args.to))?;
+    let from_name = args.from.as_str();
+    let to_name = args.to.as_str();
+
+    let from_format = Format::from_str(from_name)
+        .with_context(|| format!("invalid --from format '{}'", from_name))?;
+    let to_format = Format::from_str(to_name)
+        .with_context(|| format!("invalid --to format '{}'", to_name))?;
 
     // Parse source format
     let parser = from_format.parser();
     let mut rules = parser.parse(&args.input)
-        .with_context(|| format!("failed to parse {} at {:?}", args.from, args.input))?;
+        .with_context(|| format!("failed to parse {} at {:?}", from_name, args.input))?;
 
     if let Some(scope_str) = &args.scope {
         let s = parse_scope(scope_str)?;
@@ -80,17 +81,17 @@ fn run_via_store(args: ConvertArgs, project: String) -> anyhow::Result<()> {
     if args.dry_run {
         println!(
             "Dry run: {} rule(s) from {} → store/{} → {}",
-            rules.len(), args.from, project, args.to
+            rules.len(), from_name, project, to_name
         );
         print_rules_preview(&rules);
         return Ok(());
     }
 
     // Push to store
-    let stored = store.save_rules(Some(&project), &rules, &args.from)?;
+    let stored = store.save_rules(Some(&project), &rules, from_name)?;
     let msg = format!(
         "convert from {} ({})",
-        args.from,
+        from_name,
         chrono::Utc::now().format("%Y-%m-%d")
     );
     sync::git_commit(&store_path, &msg).context("git commit failed")?;
@@ -103,11 +104,11 @@ fn run_via_store(args: ConvertArgs, project: String) -> anyhow::Result<()> {
 
     let writer = to_format.writer();
     writer.write(&stored_rules, &args.output)
-        .with_context(|| format!("failed to write {} to {:?}", args.to, args.output))?;
+        .with_context(|| format!("failed to write {} to {:?}", to_name, args.output))?;
 
     println!(
         "Converted {} rule(s): {} → store/{} → {}",
-        stored_rules.len(), args.from, project, args.to
+        stored_rules.len(), from_name, project, to_name
     );
     Ok(())
 }
