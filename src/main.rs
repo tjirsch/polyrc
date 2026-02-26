@@ -23,7 +23,7 @@ fn main() -> anyhow::Result<()> {
             self_update::run(a.check_only, a.skip_checksum).context("self-update failed")?
         }
         cli::Commands::SetEditor(a) => commands::set_editor(a)?,
-        cli::Commands::ListFormats => {
+        cli::Commands::SupportedFormats => {
             for fmt in formats::Format::all() {
                 println!("{:<15} {}", fmt.name(), fmt.description());
             }

@@ -49,7 +49,8 @@ pub enum Commands {
     Convert(ConvertArgs),
 
     /// List all supported formats
-    ListFormats,
+    #[command(name = "supported-formats", alias = "list-formats")]
+    SupportedFormats,
 
     /// Initialize the local interlingua store (git repo)
     Init(InitArgs),

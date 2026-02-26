@@ -19,7 +19,7 @@ pub enum PolyrcError {
         source: serde_yml::Error,
     },
 
-    #[error("Unknown format: '{0}'. Use `polyrc list-formats` to see valid formats.")]
+    #[error("Unknown format: '{0}'. Use `polyrc supported-formats` to see valid formats.")]
     UnknownFormat(String),
 
     #[error("Cannot write to {path}: {reason}")]
