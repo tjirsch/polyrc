@@ -39,6 +39,9 @@ pub enum Commands {
     /// Manage projects in the store
     Project(ProjectArgs),
 
+    /// Discover installed user-level configs for all (or one) format
+    Discover(DiscoverArgs),
+
     /// Generate shell completion script
     Completion {
         /// Shell to generate completions for: bash, zsh, fish, powershell
@@ -164,4 +167,17 @@ pub enum ProjectCommands {
         /// New project name
         new_name: String,
     },
+}
+
+// ── discover ──────────────────────────────────────────────────────────────────
+
+#[derive(clap::Args, Debug)]
+pub struct DiscoverArgs {
+    /// Discover user-level configs (from ~/, ~/Library/Application Support, etc.)
+    #[arg(long)]
+    pub user: bool,
+
+    /// Only scan for this format (cursor, windsurf, copilot, claude, gemini, antigravity)
+    #[arg(long)]
+    pub format: Option<String>,
 }
