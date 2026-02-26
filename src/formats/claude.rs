@@ -16,17 +16,22 @@ impl Parser for ClaudeParser {
     ///
     /// **Project layout** — `path` is a project root (e.g. `/home/user/myapp`):
     /// - `{path}/CLAUDE.md`                    always-on, project scope
+    /// - `{path}/.claude/settings.json`        always-on, project scope (JSON → fenced block)
     /// - `{path}/.claude/rules/*.md`           always-on, project scope
     /// - `{path}/.claude/commands/*.md`        on-demand (slash commands), project scope
     /// - `{path}/.claude/skills/*/SKILL.md`   ai-decides (skill descriptions), project scope
     /// - `{path}/.claude/agents/*.md`          ai-decides, project scope
     ///
     /// **User layout** — `path` is `~/.claude` (detected by dir name ending in `.claude`):
+    /// - `{path}/settings.json`                always-on, user scope (JSON → fenced block)
     /// - `{path}/CLAUDE.md`                    always-on, user scope
     /// - `{path}/rules/*.md`                   always-on, user scope
     /// - `{path}/commands/*.md`                on-demand (slash commands), user scope
     /// - `{path}/skills/*/SKILL.md`           ai-decides, user scope
     /// - `{path}/agents/*.md`                  ai-decides, user scope
+    ///
+    /// Note: `~/.claude.json` (auth, sessions, caches) is intentionally skipped — it is
+    /// internal Claude Code state, not portable user configuration.
     fn parse(&self, path: &Path) -> Result<Vec<Rule>> {
         // Detect whether path IS the .claude config directory (user root) or a project root.
         let is_user_root = path
@@ -40,8 +45,9 @@ impl Parser for ClaudeParser {
         // Helper: path to the .claude subdirectory (only used in project layout)
         let dot_claude = path.join(".claude");
 
-        let (rules_dir, commands_dir, skills_dir, agents_dir) = if is_user_root {
+        let (settings_file, rules_dir, commands_dir, skills_dir, agents_dir) = if is_user_root {
             (
+                path.join("settings.json"),
                 path.join("rules"),
                 path.join("commands"),
                 path.join("skills"),
@@ -49,6 +55,7 @@ impl Parser for ClaudeParser {
             )
         } else {
             (
+                dot_claude.join("settings.json"),
                 dot_claude.join("rules"),
                 dot_claude.join("commands"),
                 dot_claude.join("skills"),
@@ -57,6 +64,23 @@ impl Parser for ClaudeParser {
         };
 
         let mut rules = vec![];
+
+        // ── settings.json ─────────────────────────────────────────────────────
+        if settings_file.exists() {
+            let json = fs::read_to_string(&settings_file).map_err(|e| PolyrcError::Io {
+                path: settings_file.clone(),
+                source: e,
+            })?;
+            if !json.trim().is_empty() {
+                rules.push(Rule {
+                    scope: scope.clone(),
+                    activation: Activation::Always,
+                    name: Some("settings".to_string()),
+                    content: format!("```json\n{}\n```", json.trim_end()),
+                    ..Default::default()
+                });
+            }
+        }
 
         // ── CLAUDE.md ────────────────────────────────────────────────────────
         let main_file = path.join("CLAUDE.md");
@@ -177,19 +201,40 @@ impl Writer for ClaudeWriter {
             return Ok(());
         }
 
-        if rules.len() == 1 {
-            // Single rule → CLAUDE.md
+        let dot_claude = target.join(".claude");
+
+        // Partition: settings rule (written as JSON) vs markdown rules.
+        let (settings_rules, md_rules): (Vec<&Rule>, Vec<&Rule>) = rules
+            .iter()
+            .partition(|r| r.name.as_deref() == Some("settings"));
+
+        // ── settings.json ────────────────────────────────────────────────────
+        for rule in settings_rules {
+            // Strip the ```json ... ``` fence added by the parser.
+            let json = strip_json_fence(&rule.content);
+            fs::create_dir_all(&dot_claude).map_err(|e| PolyrcError::Io {
+                path: dot_claude.clone(),
+                source: e,
+            })?;
+            let file = dot_claude.join("settings.json");
+            fs::write(&file, json.trim_end().to_string() + "\n")
+                .map_err(|e| PolyrcError::Io { path: file, source: e })?;
+        }
+
+        // ── markdown rules ───────────────────────────────────────────────────
+        if md_rules.len() == 1 {
+            // Single md rule → CLAUDE.md
             let file = target.join("CLAUDE.md");
-            let content = rules[0].content.trim_end().to_string() + "\n";
+            let content = md_rules[0].content.trim_end().to_string() + "\n";
             fs::write(&file, content).map_err(|e| PolyrcError::Io { path: file, source: e })?;
-        } else {
-            // Multiple rules → .claude/rules/*.md
-            let rules_dir = target.join(".claude/rules");
+        } else if md_rules.len() > 1 {
+            // Multiple md rules → .claude/rules/*.md
+            let rules_dir = dot_claude.join("rules");
             fs::create_dir_all(&rules_dir).map_err(|e| PolyrcError::Io {
                 path: rules_dir.clone(),
                 source: e,
             })?;
-            for rule in rules {
+            for rule in md_rules {
                 let filename = format!("{}.md", rule.filename_stem());
                 let file = rules_dir.join(&filename);
                 let content = rule.content.trim_end().to_string() + "\n";
@@ -199,4 +244,15 @@ impl Writer for ClaudeWriter {
 
         Ok(())
     }
+}
+
+/// Strip a leading/trailing ```json ... ``` fence if present, otherwise return as-is.
+fn strip_json_fence(s: &str) -> &str {
+    let s = s.trim();
+    if let Some(inner) = s.strip_prefix("```json\n").or_else(|| s.strip_prefix("```json\r\n")) {
+        if let Some(body) = inner.strip_suffix("\n```").or_else(|| inner.strip_suffix("\r\n```")) {
+            return body;
+        }
+    }
+    s
 }
