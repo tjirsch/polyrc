@@ -26,13 +26,36 @@ pub fn git_init(path: &Path) -> Result<()> {
 }
 
 /// Clone `url` into `dest`.
+///
+/// If `dest` is already a git repo, the remote URL is updated to `url` instead
+/// of re-cloning (idempotent re-init). Otherwise the parent directory is
+/// created as needed before the clone.
 pub fn git_clone(url: &str, dest: &Path) -> Result<()> {
-    // Run from parent directory
-    let parent = dest.parent().unwrap_or(Path::new("."));
-    let dest_str = dest.to_string_lossy();
+    // Already a git repo → just point origin at the new URL
+    if dest.join(".git").exists() {
+        let set = run_git(&["remote", "set-url", "origin", url], dest);
+        if set.is_err() {
+            run_git(&["remote", "add", "origin", url], dest)?;
+        }
+        return Ok(());
+    }
+
+    // Create parent directory so that e.g. ~/.polyrc/ exists before cloning
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| PolyrcError::GitError {
+            msg: format!("failed to create {}: {e}", parent.display()),
+        })?;
+    }
+
+    let dest_str = dest.to_string_lossy().into_owned();
+
+    // Use the home dir (or cwd) as the working directory — it is always
+    // guaranteed to exist, unlike the not-yet-created dest parent.
+    let work_dir = crate::config::home_dir();
+
     let output = Command::new("git")
         .args(["clone", url, &dest_str])
-        .current_dir(parent)
+        .current_dir(&work_dir)
         .output()
         .map_err(|e| PolyrcError::GitError {
             msg: format!("failed to run git clone: {e}"),

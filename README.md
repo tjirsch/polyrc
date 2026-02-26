@@ -144,7 +144,7 @@ cd ~/projects/myapp
 # After editing .cursor/rules/...
 
 polyrc push-format --format cursor --project myapp
-# → converts to IR, saves to ~/.polyrc/store, git commits
+# → converts to IR, saves to ~/polyrc/store, git commits
 
 polyrc push-store
 # → git push origin
@@ -154,7 +154,7 @@ polyrc push-store
 
 ## The interlingua (IR)
 
-Each rule is stored as a YAML file in `~/.polyrc/store/rules/<project>/`:
+Each rule is stored as a YAML file in `~/polyrc/store/rules/<project>/`:
 
 ```yaml
 scope: project          # user | project | path
@@ -183,7 +183,7 @@ Rules carry two axes of metadata through all conversions:
 
 | Scope | Meaning |
 |---|---|
-| `user` | User-global rules (`~/.polyrc/store/rules/_user/`) |
+| `user` | User-global rules (`~/polyrc/store/rules/_user/`) |
 | `project` | Project-wide rules (default) |
 | `path` | Path/glob-scoped rules |
 

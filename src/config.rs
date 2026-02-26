@@ -2,8 +2,6 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use crate::error::{PolyrcError, Result};
 
-const CONFIG_FILE: &str = "polyrc/config.toml";
-
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Config {
     #[serde(default)]
@@ -23,7 +21,7 @@ impl Default for StoreConfig {
 }
 
 impl Config {
-    /// Load config from ~/.config/polyrc/config.toml.
+    /// Load config from ~/.polyrc/config.toml.
     /// Returns a default config if the file does not exist.
     pub fn load() -> Result<Self> {
         let path = config_file_path();
@@ -37,7 +35,7 @@ impl Config {
         toml::from_str(&raw).map_err(|e| PolyrcError::TomlParse { path, source: e })
     }
 
-    /// Save config to ~/.config/polyrc/config.toml.
+    /// Save config to ~/.polyrc/config.toml.
     pub fn save(&self) -> Result<()> {
         let path = config_file_path();
         if let Some(parent) = path.parent() {
@@ -68,23 +66,35 @@ impl Config {
     }
 }
 
+/// Root directory for all polyrc data and config: ~/polyrc/
+pub fn polyrc_dir() -> PathBuf {
+    home_dir().join("polyrc")
+}
+
 fn config_file_path() -> PathBuf {
-    dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(CONFIG_FILE)
+    polyrc_dir().join("config.toml")
 }
 
 pub fn default_store_path() -> PathBuf {
-    dirs::home_dir()
+    polyrc_dir().join("store")
+}
+
+/// Resolve the user's home directory.
+///
+/// Uses the `HOME` environment variable on Unix (the shell's value), falling
+/// back to `dirs::home_dir()` (passwd lookup) if it is unset or empty.
+pub fn home_dir() -> PathBuf {
+    std::env::var("HOME")
+        .ok()
+        .filter(|h| !h.is_empty())
+        .map(PathBuf::from)
+        .or_else(dirs::home_dir)
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".polyrc/store")
 }
 
 fn expand_tilde(p: &str) -> String {
     if p.starts_with("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return format!("{}/{}", home.display(), &p[2..]);
-        }
+        return format!("{}/{}", home_dir().display(), &p[2..]);
     }
     p.to_string()
 }

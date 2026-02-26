@@ -131,11 +131,11 @@ mod commands {
 
     pub fn init(args: InitArgs) -> anyhow::Result<()> {
         let mut config = Config::load()?;
-        let store_path = if let Some(p) = args.store {
-            p
-        } else {
-            config.store_path()
-        };
+        // `init` is a setup command: always use the default store location
+        // unless the user explicitly pins a different path with --store.
+        // Reading the saved config here would silently reuse stale paths
+        // from previous interrupted runs.
+        let store_path = args.store.unwrap_or_else(crate::config::default_store_path);
 
         if let Some(url) = &args.repo {
             // Clone remote repo into store path
