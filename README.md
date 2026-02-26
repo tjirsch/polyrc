@@ -25,7 +25,7 @@ Rules are stored as structured YAML in a **local git-backed store**, so your con
 | **Cursor** | `.cursor/rules/*.mdc` | YAML frontmatter: `description`, `globs`, `alwaysApply` |
 | **Windsurf** | `.windsurf/rules/*.md` | Plain markdown; 6k char/file, 12k total limits |
 | **GitHub Copilot** | `.github/copilot-instructions.md` + `.github/instructions/*.instructions.md` | `applyTo` frontmatter for path-scoped rules |
-| **Claude Code** | `CLAUDE.md` + `.claude/rules/*.md` | Single file or per-rule directory |
+| **Claude Code** | `CLAUDE.md` + `.claude/rules/*.md` + `.claude/settings.json` | Single file, per-rule directory, or JSON settings |
 | **Gemini CLI** | `GEMINI.md` | Single file |
 | **Google Antigravity** | `.agent/rules/*.md` | Also checks legacy `.agents/rules/` |
 
@@ -34,7 +34,8 @@ Rules are stored as structured YAML in a **local git-backed store**, so your con
 ## Installation
 
 ```bash
-cargo install polyrc
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/tjirsch/polyrc/releases/latest/download/polyrc-installer.sh | sh
 ```
 
 Requires git to be installed for store operations.
@@ -56,7 +57,17 @@ polyrc convert --from gemini --to windsurf --input ~/my-project --output ~/my-pr
 polyrc convert --from cursor --to copilot --dry-run
 
 # List supported formats
-polyrc list-formats
+polyrc supported-formats
+```
+
+### Discover existing configs
+
+```bash
+# Show all user-level config files for every supported format
+polyrc discover --user
+
+# Filter to one format
+polyrc discover --user --format claude
 ```
 
 ### With a store
@@ -84,6 +95,9 @@ polyrc push-format --format cursor --project myapp
 
 # From a different directory
 polyrc push-format --format claude --project myapp --input ~/projects/myapp
+
+# Push user-level Claude settings (~/.claude/)
+polyrc push-format --format claude --input ~/.claude
 ```
 
 Each `push-format` automatically commits the changes to the local git repo.
@@ -104,14 +118,30 @@ polyrc pull-format --format cursor --project myapp --output ~/projects/myapp
 polyrc convert --from cursor --to claude --project myapp
 ```
 
+**List rules in the store:**
+
+```bash
+# All rules across all projects
+polyrc list-store
+
+# Only user-scope rules
+polyrc list-store --user
+
+# Only rules for a specific project
+polyrc list-store --project myapp
+
+# Only rules from a specific format
+polyrc list-store --format claude
+
+# Show content preview
+polyrc list-store --verbose
+```
+
 **Sync with a remote:**
 
 ```bash
-# Push local store commits to origin
-polyrc push-store
-
-# Pull from origin (applies IR-level merge on conflicts)
-polyrc pull-store
+# Pull from origin then push local commits (bidirectional sync)
+polyrc sync-store
 ```
 
 **Manage projects:**
@@ -127,7 +157,8 @@ polyrc project rename myapp my-renamed-app
 
 ```bash
 # Install
-cargo install polyrc
+curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/tjirsch/polyrc/releases/latest/download/polyrc-installer.sh | sh
 
 # Clone your central rules repo
 polyrc init --repo git@github.com:you/my-rules
@@ -146,8 +177,45 @@ cd ~/projects/myapp
 polyrc push-format --format cursor --project myapp
 # → converts to IR, saves to ~/.polyrc/store, git commits
 
-polyrc push-store
-# → git push origin
+polyrc sync-store
+# → git pull origin then git push origin
+```
+
+---
+
+## Additional commands
+
+### Self-update
+
+```bash
+# Update to the latest release
+polyrc self-update
+
+# Check for updates without installing
+polyrc self-update --check-only
+```
+
+### Shell completion
+
+```bash
+# Print completion script (bash, zsh, fish, powershell)
+polyrc completion zsh
+
+# Install to the default location for your shell
+polyrc completion zsh --install
+```
+
+### Preferred editor
+
+```bash
+# Set preferred editor (used when opening config files)
+polyrc set-editor code
+
+# Show current setting
+polyrc set-editor
+
+# Clear (falls back to $EDITOR)
+polyrc set-editor --clear
 ```
 
 ---
@@ -172,6 +240,8 @@ store_version: "1"
 ```
 
 Optional fields: `globs` (for glob-activated rules), `description` (for AI-decided rules).
+
+JSON config files (e.g. `settings.json`) are stored as fenced code blocks in the `content` field and round-trip back to JSON on `pull-format`.
 
 **Content is opaque** — polyrc wraps markdown but never parses or modifies it.
 
@@ -205,7 +275,7 @@ polyrc pull-format --format claude --scope user
 
 ## Store merge
 
-When `pull-store` encounters conflicting rules (same rule edited on two machines), polyrc applies an IR-level merge:
+When `sync-store` encounters conflicting rules (same rule edited on two machines), polyrc applies an IR-level merge:
 
 - Rules are matched by stable UUID.
 - Last-write-wins by `updated_at` timestamp.
