@@ -15,8 +15,10 @@ pub enum UserLocation {
         /// Extra context shown after the status (e.g. "edit via Settings UI").
         note: Option<&'static str>,
     },
-    /// A directory whose matching files are the config.
+    /// A flat directory whose direct *.ext children are config files.
     Dir { path: PathBuf, extension: &'static str },
+    /// A directory where each subdirectory may contain a SKILL.md (Claude skills layout).
+    SkillDir { path: PathBuf },
     /// Stored in a web / app UI — no local file to scan.
     WebUi { hint: &'static str },
 }
@@ -29,12 +31,28 @@ pub fn user_locations(fmt: &Format) -> Vec<UserLocation> {
 
     match fmt {
         Format::Claude => vec![
+            // Main memory / instruction file
             UserLocation::File {
                 path: home.join(".claude/CLAUDE.md"),
                 note: None,
             },
+            // Modular always-on rules
             UserLocation::Dir {
                 path: home.join(".claude/rules"),
+                extension: "md",
+            },
+            // Legacy slash-command files (still fully supported)
+            UserLocation::Dir {
+                path: home.join(".claude/commands"),
+                extension: "md",
+            },
+            // Modern skills (each skill is a subdirectory containing SKILL.md)
+            UserLocation::SkillDir {
+                path: home.join(".claude/skills"),
+            },
+            // Subagent definitions
+            UserLocation::Dir {
+                path: home.join(".claude/agents"),
                 extension: "md",
             },
         ],
@@ -56,7 +74,6 @@ pub fn user_locations(fmt: &Format) -> Vec<UserLocation> {
 
         Format::Cursor => {
             // User rules live inside the VS Code–style settings JSON, not a standalone file.
-            // We report the file's presence but can't extract the rules without JSON parsing.
             let settings = dirs::config_dir()
                 .unwrap_or_else(|| home.join("Library/Application Support"))
                 .join("Cursor/User/settings.json");
@@ -155,6 +172,31 @@ fn print_location(loc: &UserLocation) {
             }
         }
 
+        UserLocation::SkillDir { path } => {
+            let display = format!("{}/", tilde(path));
+            if path.exists() {
+                match skill_subdirs(path) {
+                    Ok(skills) if skills.is_empty() => {
+                        println!("    {:<60}  found  (empty)", display);
+                    }
+                    Ok(skills) => {
+                        let names: Vec<_> = skills.iter().map(|s| s.as_str()).collect();
+                        println!(
+                            "    {:<60}  found  ({} skill(s): {})",
+                            display,
+                            names.len(),
+                            names.join(", ")
+                        );
+                    }
+                    Err(_) => {
+                        println!("    {:<60}  found  (unreadable)", display);
+                    }
+                }
+            } else {
+                println!("    {:<60}  not found", display);
+            }
+        }
+
         UserLocation::WebUi { hint } => {
             println!("    web UI  →  {}", hint);
         }
@@ -178,8 +220,20 @@ fn dir_files(dir: &PathBuf, ext: &str) -> Result<Vec<PathBuf>> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some(ext))
+        .filter(|p| p.is_file() && p.extension().and_then(|e| e.to_str()) == Some(ext))
         .collect();
     files.sort();
     Ok(files)
+}
+
+/// Returns names of subdirectories that contain a SKILL.md file.
+fn skill_subdirs(dir: &PathBuf) -> Result<Vec<String>> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .filter(|e| e.path().join("SKILL.md").exists())
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect();
+    names.sort();
+    Ok(names)
 }
