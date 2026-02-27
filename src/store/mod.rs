@@ -254,23 +254,16 @@ impl Store {
     }
 }
 
-/// Initialize a new store at `store_path`.
+/// Set up the git repo for the store at `store_path`.
 ///
-/// Creates the git repo and marks the store as initialised in `config.toml`.
-/// All polyrc config (version, created_at, remote_url) is written there —
-/// nothing polyrc-specific is put inside the git repo.
-pub fn init_store(store_path: &Path, remote_url: Option<&str>) -> Result<()> {
+/// Only handles the filesystem + git side. Config fields (version, remote_url)
+/// are written by the caller so there is no double-load / overwrite race.
+pub fn init_git(store_path: &Path) -> Result<()> {
     fs::create_dir_all(store_path).map_err(|e| PolyrcError::Io {
         path: store_path.to_path_buf(),
         source: e,
     })?;
 
-    // Write version + optional remote URL into config.toml (not the store repo)
-    let mut config = Config::load().unwrap_or_default();
-    config.init_store_config(remote_url);
-    config.save()?;
-
-    // git init (only if not already a repo)
     let git_dir = store_path.join(".git");
     if !git_dir.exists() {
         crate::sync::git_init(store_path)?;

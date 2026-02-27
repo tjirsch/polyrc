@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use crate::error::{PolyrcError, Result};
 
@@ -71,11 +71,6 @@ impl Config {
         default_store_path()
     }
 
-    /// Set the store path and save config.
-    pub fn set_store_path(&mut self, path: &Path) -> Result<()> {
-        self.store.path = Some(path.to_string_lossy().to_string());
-        self.save()
-    }
 
     /// Returns true if the store has been initialised (version is set).
     pub fn store_initialized(&self) -> bool {

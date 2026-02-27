@@ -148,13 +148,17 @@ mod commands {
             println!("Cloning {} → {}", url, store_path.display());
             sync::git_clone(url, &store_path)
                 .with_context(|| format!("failed to clone {url}"))?;
-            store::init_store(&store_path, Some(url))?;
+            store::init_git(&store_path)?;
+            config.init_store_config(Some(url));
         } else {
             println!("Initializing local store at {}", store_path.display());
-            store::init_store(&store_path, None)?;
+            store::init_git(&store_path)?;
+            config.init_store_config(None);
         }
 
-        config.set_store_path(&store_path)?;
+        // Set store path + version/remote in a single save — no double-load overwrite
+        config.store.path = Some(store_path.to_string_lossy().to_string());
+        config.save().context("failed to save config")?;
         println!("Store ready at {}", store_path.display());
         Ok(())
     }
