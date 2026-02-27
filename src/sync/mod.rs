@@ -83,14 +83,35 @@ pub fn git_commit(store_path: &Path, message: &str) -> Result<()> {
 }
 
 /// Push to the configured remote (origin).
+///
+/// Uses `--set-upstream` so it works correctly for both the initial push to an
+/// empty remote and subsequent pushes.
 pub fn git_push(store_path: &Path) -> Result<()> {
-    run_git(&["push", "origin"], store_path)?;
+    run_git(&["push", "--set-upstream", "origin", "HEAD"], store_path)?;
     Ok(())
 }
 
 /// Pull from the configured remote (origin).
+///
+/// Fetches first to detect whether the remote has any commits.  If the remote
+/// is empty (freshly initialised), the pull is skipped gracefully so that
+/// `sync-store` does not fail on first use.
 pub fn git_pull(store_path: &Path) -> Result<()> {
-    run_git(&["pull", "origin"], store_path)?;
+    // A fetch error (e.g. network, empty repo) is not fatal here — we just
+    // won't have anything to merge, which is fine on first init.
+    let _ = run_git(&["fetch", "origin"], store_path);
+
+    // Check whether the remote branch actually exists yet.
+    let has_remote = run_git(
+        &["rev-parse", "--verify", "origin/main"],
+        store_path,
+    );
+    if has_remote.is_err() {
+        // Remote is empty or main doesn't exist yet — nothing to pull.
+        return Ok(());
+    }
+
+    run_git(&["pull", "origin", "main"], store_path)?;
     Ok(())
 }
 
