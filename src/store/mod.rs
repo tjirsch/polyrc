@@ -6,7 +6,6 @@ use crate::config::Config;
 use crate::error::{PolyrcError, Result};
 use crate::ir::Rule;
 
-const RULES_DIR: &str = "rules";
 /// Directory name for user-scope rules (always-on ambient + on-demand commands).
 pub const USER_PROJECT: &str = "user";
 /// Legacy name — migrated to USER_PROJECT on first open.
@@ -36,10 +35,10 @@ impl Store {
         Ok(store)
     }
 
-    /// Rename `rules/_user/` → `rules/user/` if it still exists.
+    /// Rename `_user/` → `user/` if it still exists.
     fn migrate_legacy_user_dir(&self) -> Result<()> {
-        let legacy = self.path.join(RULES_DIR).join(USER_PROJECT_LEGACY);
-        let current = self.path.join(RULES_DIR).join(USER_PROJECT);
+        let legacy = self.path.join(USER_PROJECT_LEGACY);
+        let current = self.path.join(USER_PROJECT);
         if legacy.exists() && !current.exists() {
             fs::rename(&legacy, &current).map_err(|e| PolyrcError::Io {
                 path: legacy.clone(),
@@ -63,7 +62,7 @@ impl Store {
                 source: e.into(),
             })?;
             let p = entry.path();
-            if p.extension().and_then(|e| e.to_str()) != Some("yml") {
+            if p.extension().and_then(|e| e.to_str()) != Some("yaml") {
                 continue;
             }
             let raw = fs::read_to_string(p).map_err(|e| PolyrcError::Io {
@@ -95,7 +94,7 @@ impl Store {
         for entry in WalkDir::new(&dir).min_depth(1).max_depth(1) {
             if let Ok(e) = entry {
                 let p = e.path();
-                if p.extension().and_then(|ex| ex.to_str()) == Some("yml") {
+                if p.extension().and_then(|ex| ex.to_str()) == Some("yaml") {
                     fs::remove_file(p).map_err(|err| PolyrcError::Io {
                         path: p.to_path_buf(),
                         source: err,
@@ -130,7 +129,7 @@ impl Store {
             }
             r.updated_at = Some(now.clone());
 
-            let filename = format!("{}.yml", r.filename_stem());
+            let filename = format!("{}.yaml", r.filename_stem());
             let file = dir.join(&filename);
             let content = serde_yml::to_string(&r).map_err(|e| PolyrcError::YamlParse {
                 path: file.clone(),
@@ -149,14 +148,14 @@ impl Store {
     /// Returns `(namespace_key, rule)`.
     pub fn load_rule_by_name(&self, name: &str) -> Result<Option<(String, Rule)>> {
         for ns in [PROJECTS_NAMESPACE, USER_PROJECT] {
-            let dir = self.path.join(RULES_DIR).join(ns);
+            let dir = self.path.join(ns);
             if !dir.exists() {
                 continue;
             }
             for entry in WalkDir::new(&dir).min_depth(1).max_depth(1).sort_by_file_name() {
                 let entry = entry.map_err(|e| PolyrcError::Io { path: dir.clone(), source: e.into() })?;
                 let p = entry.path();
-                if p.extension().and_then(|e| e.to_str()) != Some("yml") {
+                if p.extension().and_then(|e| e.to_str()) != Some("yaml") {
                     continue;
                 }
                 let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
@@ -173,7 +172,7 @@ impl Store {
     /// Save a single named rule into the given namespace (`projects` or `user`).
     /// Returns the stored rule (with id and timestamps set).
     pub fn save_rule_to_namespace(&self, namespace: &str, name: &str, rule: &Rule) -> Result<Rule> {
-        let dir = self.path.join(RULES_DIR).join(namespace);
+        let dir = self.path.join(namespace);
         fs::create_dir_all(&dir).map_err(|e| PolyrcError::Io { path: dir.clone(), source: e })?;
 
         let now = chrono::Utc::now().to_rfc3339();
@@ -197,28 +196,29 @@ impl Store {
         r.updated_at = Some(now);
         if r.name.is_none() { r.name = Some(name.to_string()); }
 
-        let filename = format!("{}.yml", name);
+        let filename = format!("{}.yaml", name);
         let file = dir.join(&filename);
         let content = serde_yml::to_string(&r).map_err(|e| PolyrcError::YamlParse { path: file.clone(), source: e })?;
         fs::write(&file, content).map_err(|e| PolyrcError::Io { path: file, source: e })?;
         Ok(r)
     }
 
-    /// List all project keys in the store (directory names under rules/).
+    /// List all namespace directories in the store (direct subdirs of store root).
     pub fn list_projects(&self) -> Result<Vec<String>> {
-        let rules_dir = self.path.join(RULES_DIR);
-        if !rules_dir.exists() {
+        if !self.path.exists() {
             return Ok(vec![]);
         }
         let mut projects = vec![];
-        for entry in WalkDir::new(&rules_dir).min_depth(1).max_depth(1) {
+        for entry in WalkDir::new(&self.path).min_depth(1).max_depth(1) {
             let entry = entry.map_err(|e| PolyrcError::Io {
-                path: rules_dir.clone(),
+                path: self.path.clone(),
                 source: e.into(),
             })?;
             if entry.file_type().is_dir() {
                 if let Some(name) = entry.file_name().to_str() {
-                    projects.push(name.to_string());
+                    if name != ".git" {
+                        projects.push(name.to_string());
+                    }
                 }
             }
         }
@@ -228,8 +228,8 @@ impl Store {
 
     /// Rename a project directory in the store.
     pub fn rename_project(&self, old_name: &str, new_name: &str) -> Result<()> {
-        let old_dir = self.path.join(RULES_DIR).join(old_name);
-        let new_dir = self.path.join(RULES_DIR).join(new_name);
+        let old_dir = self.path.join(old_name);
+        let new_dir = self.path.join(new_name);
         if !old_dir.exists() {
             return Err(PolyrcError::WriteFailure {
                 path: old_dir,
@@ -250,19 +250,28 @@ impl Store {
 
     fn project_dir(&self, project: Option<&str>) -> PathBuf {
         let key = project.unwrap_or(USER_PROJECT);
-        self.path.join(RULES_DIR).join(key)
+        self.path.join(key)
     }
 }
 
 /// Set up the git repo for the store at `store_path`.
 ///
-/// Only handles the filesystem + git side. Config fields (version, remote_url)
-/// are written by the caller so there is no double-load / overwrite race.
+/// Creates the store directory skeleton (`user/`, `projects/`) and initialises
+/// git if not already present. Config fields (version, remote_url) are written
+/// by the caller so there is no double-load / overwrite race.
 pub fn init_git(store_path: &Path) -> Result<()> {
     fs::create_dir_all(store_path).map_err(|e| PolyrcError::Io {
         path: store_path.to_path_buf(),
         source: e,
     })?;
+
+    // Eagerly create namespace dirs so the store structure is visible immediately.
+    for ns in [USER_PROJECT, PROJECTS_NAMESPACE] {
+        let dir = store_path.join(ns);
+        if !dir.exists() {
+            fs::create_dir_all(&dir).map_err(|e| PolyrcError::Io { path: dir, source: e })?;
+        }
+    }
 
     let git_dir = store_path.join(".git");
     if !git_dir.exists() {
