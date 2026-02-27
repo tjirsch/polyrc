@@ -221,11 +221,15 @@ polyrc self-update --check-only
 ### Shell completion
 
 ```bash
-# Print completion script (bash, zsh, fish, powershell)
-polyrc completion zsh
+# Install zsh completions to the default location (macOS default)
+polyrc completion
 
-# Install to the default location for your shell
-polyrc completion zsh --install
+# Install completions for a specific shell
+polyrc completion bash
+
+# Print completion script to stdout instead of installing
+polyrc completion --install=false
+polyrc completion bash --install=false
 ```
 
 ### Preferred editor
