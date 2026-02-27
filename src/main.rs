@@ -174,11 +174,8 @@ mod commands {
                 // Use format name as the namespace so origins stay clear
                 let ns = fmt.name();
                 match push_one(&store, &fmt, &args.input, &args.scope, args.dry_run, Some(ns)) {
-                    Ok(0) => println!("  {} — skipped (no rules found)", fmt.name()),
-                    Ok(n) => {
-                        println!("  {} — {} rule(s) stored in {}/", fmt.name(), n, ns);
-                        pushed_names.push(fmt.name());
-                    }
+                    Ok(0) => {} // push_one already printed the reason
+                    Ok(_n) => pushed_names.push(fmt.name()),
                     Err(e) => eprintln!("  {} — error: {:#}", fmt.name(), e),
                 }
             }
@@ -198,10 +195,7 @@ mod commands {
                 .with_context(|| format!("unknown format '{}'", fmt_name))?;
             let key = project_key(args.project.as_deref(), &args.scope);
             let n = push_one(&store, &fmt, &args.input, &args.scope, args.dry_run, key.as_deref())?;
-            if n == 0 {
-                eprintln!("warning: no rules found");
-            } else if !args.dry_run {
-                println!("Stored {} rule(s) → {}", n, store_path.display());
+            if n > 0 && !args.dry_run {
                 let msg = format!(
                     "push-format from {} ({})",
                     fmt_name,
@@ -224,9 +218,26 @@ mod commands {
         project_key: Option<&str>,
     ) -> anyhow::Result<usize> {
         let fmt_name = fmt.name();
+
+        // Auto-detect user input dir when --scope user and --input is the default "."
+        let user_dir;
+        let effective_input: &std::path::Path = if scope.as_deref() == Some("user")
+            && input == std::path::Path::new(".")
+        {
+            match fmt.user_input_dir() {
+                Some(dir) => { user_dir = dir; &user_dir }
+                None => {
+                    println!("  {} — skipped (no local user-level config; use --input to specify)", fmt_name);
+                    return Ok(0);
+                }
+            }
+        } else {
+            input
+        };
+
         let parser = fmt.parser();
-        let mut rules = parser.parse(input)
-            .with_context(|| format!("failed to parse {} at {}", fmt_name, input.display()))?;
+        let mut rules = parser.parse(effective_input)
+            .with_context(|| format!("failed to parse {} at {}", fmt_name, effective_input.display()))?;
 
         if let Some(scope_str) = scope {
             let s = parse_scope(scope_str)?;
@@ -234,17 +245,20 @@ mod commands {
         }
 
         if rules.is_empty() {
+            println!("  {} — skipped (no rules found)", fmt_name);
             return Ok(0);
         }
 
         if dry_run {
-            println!("Dry run: {} rule(s) from {} → store/{}", rules.len(), fmt_name,
+            println!("  {} — dry run: {} rule(s) → store/{}", fmt_name, rules.len(),
                 project_key.unwrap_or(store::USER_PROJECT));
             print_rules_preview(&rules);
             return Ok(rules.len());
         }
 
         let stored = store.save_rules(project_key, &rules, fmt_name)?;
+        println!("  {} — stored {} rule(s) → store/{}", fmt_name, stored.len(),
+            project_key.unwrap_or(store::USER_PROJECT));
         Ok(stored.len())
     }
 
@@ -257,8 +271,7 @@ mod commands {
             for fmt in Format::all() {
                 let key = project_key(args.project.as_deref(), &args.scope);
                 match pull_one(&store, &fmt, &args.output, &args.scope, args.dry_run, key.as_deref()) {
-                    Ok(0) => println!("  {} — skipped (no rules in store)", fmt.name()),
-                    Ok(n) => println!("  {} — wrote {} rule(s)", fmt.name(), n),
+                    Ok(_) => {} // pull_one prints its own per-format status
                     Err(e) => eprintln!("  {} — error: {:#}", fmt.name(), e),
                 }
             }
@@ -268,12 +281,7 @@ mod commands {
             let fmt = Format::from_str(fmt_name)
                 .with_context(|| format!("unknown format '{}'", fmt_name))?;
             let key = project_key(args.project.as_deref(), &args.scope);
-            let n = pull_one(&store, &fmt, &args.output, &args.scope, args.dry_run, key.as_deref())?;
-            if n == 0 {
-                eprintln!("warning: no rules found in store for project {:?}", key);
-            } else {
-                println!("Wrote {} rule(s) as {} to {}", n, fmt_name, args.output.display());
-            }
+            pull_one(&store, &fmt, &args.output, &args.scope, args.dry_run, key.as_deref())?;
         }
         Ok(())
     }
@@ -296,18 +304,36 @@ mod commands {
         }
 
         if rules.is_empty() {
+            println!("  {} — skipped (no rules in store)", fmt_name);
             return Ok(0);
         }
 
+        // Auto-detect user output dir when --scope user and output is the default "."
+        let user_dir;
+        let effective_output: &std::path::Path = if scope.as_deref() == Some("user")
+            && output == std::path::Path::new(".")
+        {
+            match fmt.user_input_dir() {
+                Some(dir) => { user_dir = dir; &user_dir }
+                None => {
+                    println!("  {} — skipped (no local user-level config; use --output to specify)", fmt_name);
+                    return Ok(0);
+                }
+            }
+        } else {
+            output
+        };
+
         if dry_run {
-            println!("Dry run: {} rule(s) from store → {}", rules.len(), fmt_name);
+            println!("  {} — dry run: {} rule(s) from store → {}", fmt_name, rules.len(), effective_output.display());
             print_rules_preview(&rules);
             return Ok(rules.len());
         }
 
         let writer = fmt.writer();
-        writer.write(&rules, output)
-            .with_context(|| format!("failed to write {} to {}", fmt_name, output.display()))?;
+        writer.write(&rules, effective_output)
+            .with_context(|| format!("failed to write {} to {}", fmt_name, effective_output.display()))?;
+        println!("  {} — wrote {} rule(s) to {}", fmt_name, rules.len(), effective_output.display());
         Ok(rules.len())
     }
 
