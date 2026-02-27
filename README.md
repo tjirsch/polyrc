@@ -98,6 +98,12 @@ polyrc push-format --format claude --project myapp --input ~/projects/myapp
 
 # Push user-level Claude settings (~/.claude/)
 polyrc push-format --format claude --input ~/.claude
+
+# Push all supported formats at once — each stored in its own namespace (cursor/, claude/, …)
+polyrc push-format --all --input .
+
+# Dry-run: see what would be stored without touching anything
+polyrc push-format --all --dry-run
 ```
 
 Each `push-format` automatically commits the changes to the local git repo.
@@ -110,6 +116,23 @@ polyrc pull-format --format claude --project myapp
 
 # Into a specific directory
 polyrc pull-format --format cursor --project myapp --output ~/projects/myapp
+
+# Pull and write all formats at once
+polyrc pull-format --all --project myapp
+```
+
+**Push and pull individual named rules:**
+
+```bash
+# Push a single rule file into the store library (projects/ namespace by default)
+polyrc push-rule my-gitignore --from-file .gitignore --scope path
+
+# Push into the user/ namespace instead
+polyrc push-rule auto-pr --from-file auto-pr.md --namespace user --scope user --activation always
+
+# Pull a named rule from the store and write it as a specific format
+polyrc pull-rule my-gitignore --format cursor
+polyrc pull-rule my-gitignore --format claude
 ```
 
 **Convert via store (push + pull in one step):**

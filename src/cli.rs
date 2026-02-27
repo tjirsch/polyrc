@@ -72,9 +72,9 @@ pub enum Commands {
     #[command(name = "list-store")]
     ListStore(ListStoreArgs),
 
-    /// Save a rule or file into the store library (projects/ or user/)
-    #[command(name = "save-rule")]
-    SaveRule(SaveRuleArgs),
+    /// Push a rule or file into the store library (projects/ or user/)
+    #[command(name = "push-rule")]
+    PushRule(PushRuleArgs),
 
     /// Pull a named rule from the store and write it to the current project
     #[command(name = "pull-rule")]
@@ -149,11 +149,15 @@ pub struct InitArgs {
 
 #[derive(clap::Args, Debug)]
 pub struct PushFormatArgs {
-    /// Format to read from
-    #[arg(long, value_enum)]
-    pub format: FormatArg,
+    /// Format to read from (mutually exclusive with --all)
+    #[arg(long, value_enum, required_unless_present = "all", conflicts_with = "all")]
+    pub format: Option<FormatArg>,
 
-    /// Project name to store rules under
+    /// Push all supported formats; each is stored under its format name as namespace
+    #[arg(long, conflicts_with = "format")]
+    pub all: bool,
+
+    /// Project name to store rules under (ignored when --all is set)
     #[arg(long)]
     pub project: Option<String>,
 
@@ -174,9 +178,13 @@ pub struct PushFormatArgs {
 
 #[derive(clap::Args, Debug)]
 pub struct PullFormatArgs {
-    /// Format to write
-    #[arg(long, value_enum)]
-    pub format: FormatArg,
+    /// Format to write (mutually exclusive with --all)
+    #[arg(long, value_enum, required_unless_present = "all", conflicts_with = "all")]
+    pub format: Option<FormatArg>,
+
+    /// Pull and write all supported formats
+    #[arg(long, conflicts_with = "format")]
+    pub all: bool,
 
     /// Project name to load rules from
     #[arg(long)]
@@ -266,10 +274,10 @@ pub struct ListStoreArgs {
     pub verbose: bool,
 }
 
-// ── save-rule ─────────────────────────────────────────────────────────────────
+// ── push-rule ─────────────────────────────────────────────────────────────────
 
 #[derive(clap::Args, Debug)]
-pub struct SaveRuleArgs {
+pub struct PushRuleArgs {
     /// Name for the rule in the store (e.g. "rust-gitignore")
     pub name: String,
 
