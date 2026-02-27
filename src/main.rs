@@ -31,8 +31,8 @@ fn main() -> anyhow::Result<()> {
         cli::Commands::Init(a) => commands::init(a)?,
         cli::Commands::PushFormat(a) => commands::push_format(a)?,
         cli::Commands::PullFormat(a) => commands::pull_format(a)?,
-        cli::Commands::SyncStore => commands::sync_store()?,
-        cli::Commands::ListStore(a) => commands::list_store(a)?,
+        cli::Commands::Sync(a) => commands::sync(a)?,
+        cli::Commands::ListProject(a) => commands::list_project(a)?,
         cli::Commands::PushRule(a) => commands::push_rule(a)?,
         cli::Commands::PullRule(a) => commands::pull_rule(a)?,
         cli::Commands::Project(a) => commands::project(a)?,
@@ -129,19 +129,58 @@ fn completion_install_path(shell: clap_complete::Shell) -> anyhow::Result<(std::
 
 mod commands {
     use anyhow::Context;
-    use crate::cli::{ActivationArg, InitArgs, ListStoreArgs, ProjectArgs, ProjectCommands, PullFormatArgs, PullRuleArgs, PushFormatArgs, PushRuleArgs, ScopeArg, SetEditorArgs};
+    use crate::cli::{ActivationArg, InitArgs, ListProjectArgs, ProjectArgs, ProjectCommands, PullFormatArgs, PullRuleArgs, PushFormatArgs, PushRuleArgs, SetEditorArgs, SyncArgs};
     use crate::config::Config;
     use crate::formats::Format;
     use crate::ir::Scope;
     use crate::store::{self, Store};
     use crate::sync;
 
+    /// Normalize a project name to camelCase, stripping invalid characters.
+    /// Rejects empty results and the reserved name "user".
+    fn normalize_project_name(input: &str) -> anyhow::Result<String> {
+        let segments: Vec<&str> = input
+            .split(|c: char| matches!(c, ' ' | '\t' | '_' | '-' | '/' | '\\' | '.'))
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        if segments.is_empty() {
+            anyhow::bail!("project name '{}' is empty after normalization", input);
+        }
+
+        let mut result = String::new();
+        for seg in &segments {
+            // Drop non-alphanumeric chars within each segment
+            let cleaned: String = seg.chars().filter(|c| c.is_alphanumeric()).collect();
+            if cleaned.is_empty() {
+                continue;
+            }
+            if result.is_empty() {
+                // First word: all lowercase
+                result.push_str(&cleaned.to_lowercase());
+            } else {
+                // Subsequent words: capitalize first char, lowercase rest
+                let mut chars = cleaned.chars();
+                if let Some(first) = chars.next() {
+                    result.push_str(&first.to_uppercase().to_string());
+                    result.push_str(&chars.as_str().to_lowercase());
+                }
+            }
+        }
+
+        if result.is_empty() {
+            anyhow::bail!("project name '{}' contains no valid characters", input);
+        }
+        if result == store::USER_PROJECT {
+            anyhow::bail!(
+                "'user' is a reserved project name; use --user for user-scope operations"
+            );
+        }
+        Ok(result)
+    }
+
     pub fn init(args: InitArgs) -> anyhow::Result<()> {
         let mut config = Config::load()?;
-        // `init` is a setup command: always use the default store location
-        // unless the user explicitly pins a different path with --store.
-        // Reading the saved config here would silently reuse stale paths
-        // from previous interrupted runs.
         let store_path = args.store.unwrap_or_else(crate::config::default_store_path);
 
         if let Some(url) = &args.repo {
@@ -156,7 +195,6 @@ mod commands {
             config.init_store_config(None);
         }
 
-        // Set store path + version/remote in a single save — no double-load overwrite
         config.store.path = Some(store_path.to_string_lossy().to_string());
         config.save().context("failed to save config")?;
         println!("Store ready at {}", store_path.display());
@@ -168,14 +206,15 @@ mod commands {
         let store_path = config.store_path();
         let store = Store::open(&store_path).context("store not initialized — run `polyrc init` first")?;
 
+        // Determine routing
+        let (user_mode, project_key) = resolve_routing(args.user, args.project.as_deref())?;
+
         if args.all {
             let mut pushed_names: Vec<&str> = vec![];
             for fmt in Format::all() {
-                // Use format name as the namespace so origins stay clear
-                let ns = fmt.name();
-                match push_one(&store, &fmt, &args.input, &args.scope, args.dry_run, Some(ns)) {
+                match push_one(&store, &fmt, &args.input, user_mode, args.dry_run, &project_key) {
                     Ok(0) => {} // push_one already printed the reason
-                    Ok(_n) => pushed_names.push(fmt.name()),
+                    Ok(_) => pushed_names.push(fmt.name()),
                     Err(e) => eprintln!("  {} — error: {:#}", fmt.name(), e),
                 }
             }
@@ -193,8 +232,7 @@ mod commands {
             let fmt_name = fmt_arg.as_str();
             let fmt = Format::from_str(fmt_name)
                 .with_context(|| format!("unknown format '{}'", fmt_name))?;
-            let key = project_key(args.project.as_deref(), &args.scope);
-            let n = push_one(&store, &fmt, &args.input, &args.scope, args.dry_run, key.as_deref())?;
+            let n = push_one(&store, &fmt, &args.input, user_mode, args.dry_run, &project_key)?;
             if n > 0 && !args.dry_run {
                 let msg = format!(
                     "push-format from {} ({})",
@@ -213,17 +251,15 @@ mod commands {
         store: &Store,
         fmt: &Format,
         input: &std::path::Path,
-        scope: &Option<String>,
+        user: bool,
         dry_run: bool,
-        project_key: Option<&str>,
+        project_key: &str,
     ) -> anyhow::Result<usize> {
         let fmt_name = fmt.name();
 
-        // Auto-detect user input dir when --scope user and --input is the default "."
+        // Auto-detect user input dir when --user and --input is the default "."
         let user_dir;
-        let effective_input: &std::path::Path = if scope.as_deref() == Some("user")
-            && input == std::path::Path::new(".")
-        {
+        let effective_input: &std::path::Path = if user && input == std::path::Path::new(".") {
             match fmt.user_input_dir() {
                 Some(dir) => { user_dir = dir; &user_dir }
                 None => {
@@ -239,9 +275,9 @@ mod commands {
         let mut rules = parser.parse(effective_input)
             .with_context(|| format!("failed to parse {} at {}", fmt_name, effective_input.display()))?;
 
-        if let Some(scope_str) = scope {
-            let s = parse_scope(scope_str)?;
-            rules.retain(|r| r.scope == s);
+        // When using --user, filter to user-scope rules only
+        if user {
+            rules.retain(|r| r.scope == Scope::User);
         }
 
         if rules.is_empty() {
@@ -250,15 +286,13 @@ mod commands {
         }
 
         if dry_run {
-            println!("  {} — dry run: {} rule(s) → store/{}", fmt_name, rules.len(),
-                project_key.unwrap_or(store::USER_PROJECT));
+            println!("  {} — dry run: {} rule(s) → store/{}", fmt_name, rules.len(), project_key);
             print_rules_preview(&rules);
             return Ok(rules.len());
         }
 
-        let stored = store.save_rules(project_key, &rules, fmt_name)?;
-        println!("  {} — stored {} rule(s) → store/{}", fmt_name, stored.len(),
-            project_key.unwrap_or(store::USER_PROJECT));
+        let stored = store.save_rules(Some(project_key), &rules, fmt_name)?;
+        println!("  {} — stored {} rule(s) → store/{}", fmt_name, stored.len(), project_key);
         Ok(stored.len())
     }
 
@@ -267,10 +301,11 @@ mod commands {
         let store_path = config.store_path();
         let store = Store::open(&store_path).context("store not initialized — run `polyrc init` first")?;
 
+        let (user_mode, project_key) = resolve_routing(args.user, args.project.as_deref())?;
+
         if args.all {
             for fmt in Format::all() {
-                let key = project_key(args.project.as_deref(), &args.scope);
-                match pull_one(&store, &fmt, &args.output, &args.scope, args.dry_run, key.as_deref()) {
+                match pull_one(&store, &fmt, &args.output, user_mode, args.dry_run, &project_key) {
                     Ok(_) => {} // pull_one prints its own per-format status
                     Err(e) => eprintln!("  {} — error: {:#}", fmt.name(), e),
                 }
@@ -280,8 +315,7 @@ mod commands {
             let fmt_name = fmt_arg.as_str();
             let fmt = Format::from_str(fmt_name)
                 .with_context(|| format!("unknown format '{}'", fmt_name))?;
-            let key = project_key(args.project.as_deref(), &args.scope);
-            pull_one(&store, &fmt, &args.output, &args.scope, args.dry_run, key.as_deref())?;
+            pull_one(&store, &fmt, &args.output, user_mode, args.dry_run, &project_key)?;
         }
         Ok(())
     }
@@ -291,16 +325,16 @@ mod commands {
         store: &Store,
         fmt: &Format,
         output: &std::path::Path,
-        scope: &Option<String>,
+        user: bool,
         dry_run: bool,
-        project_key: Option<&str>,
+        project_key: &str,
     ) -> anyhow::Result<usize> {
         let fmt_name = fmt.name();
-        let mut rules = store.load_rules(project_key)?;
+        let mut rules = store.load_rules(Some(project_key))?;
 
-        if let Some(scope_str) = scope {
-            let s = parse_scope(scope_str)?;
-            rules.retain(|r| r.scope == s);
+        // When using --user, filter to user-scope rules only
+        if user {
+            rules.retain(|r| r.scope == Scope::User);
         }
 
         if rules.is_empty() {
@@ -308,11 +342,9 @@ mod commands {
             return Ok(0);
         }
 
-        // Auto-detect user output dir when --scope user and output is the default "."
+        // Auto-detect user output dir when --user and output is the default "."
         let user_dir;
-        let effective_output: &std::path::Path = if scope.as_deref() == Some("user")
-            && output == std::path::Path::new(".")
-        {
+        let effective_output: &std::path::Path = if user && output == std::path::Path::new(".") {
             match fmt.user_input_dir() {
                 Some(dir) => { user_dir = dir; &user_dir }
                 None => {
@@ -337,28 +369,36 @@ mod commands {
         Ok(rules.len())
     }
 
-    pub fn sync_store() -> anyhow::Result<()> {
+    pub fn sync(args: SyncArgs) -> anyhow::Result<()> {
         let config = Config::load()?;
         let store_path = config.store_path();
         let store = Store::open(&store_path).context("store not initialized")?;
 
-        // 1. Pull remote changes in first
-        println!("Pulling from remote...");
-        sync::git_pull(&store_path).context("git pull failed")?;
+        if !args.push_only {
+            // Pull phase
+            println!("Pulling from remote...");
+            sync::git_pull(&store_path).context("git pull failed")?;
 
-        // Re-save all projects after pull to normalise IDs and metadata
-        for project in store.list_projects()? {
-            let rules = store.load_rules(Some(&project))?;
-            if !rules.is_empty() {
-                let _ = store.save_rules(Some(&project), &rules, "sync-store");
+            // Re-save all projects after pull to normalise IDs and metadata
+            for project in store.list_projects()? {
+                let rules = store.load_rules(Some(&project))?;
+                if !rules.is_empty() {
+                    let _ = store.save_rules(Some(&project), &rules, "sync");
+                }
             }
+            println!("Pull complete.");
         }
-        println!("Pull complete.");
 
-        // 2. Push local commits to remote
-        println!("Pushing to remote...");
-        sync::git_push(&store_path).context("git push failed")?;
-        println!("Sync complete.");
+        if !args.pull_only {
+            // Push phase
+            println!("Pushing to remote...");
+            sync::git_push(&store_path).context("git push failed")?;
+            println!("Push complete.");
+        }
+
+        if !args.push_only && !args.pull_only {
+            println!("Sync complete.");
+        }
         Ok(())
     }
 
@@ -368,115 +408,68 @@ mod commands {
         let store = Store::open(&store_path).context("store not initialized")?;
 
         match args.command {
-            ProjectCommands::List => {
-                let projects = store.list_projects()?;
-                if projects.is_empty() {
-                    println!("No projects in store.");
-                } else {
-                    println!("Projects in store:");
-                    for p in &projects {
-                        let rules = store.load_rules(Some(p)).unwrap_or_default();
-                        println!("  {} ({} rule(s))", p, rules.len());
-                    }
-                }
-            }
             ProjectCommands::Rename { old_name, new_name } => {
-                store.rename_project(&old_name, &new_name)?;
-                let msg = format!("rename project {} → {}", old_name, new_name);
+                let old_norm = normalize_project_name(&old_name)
+                    .with_context(|| format!("invalid old project name '{}'", old_name))?;
+                let new_norm = normalize_project_name(&new_name)
+                    .with_context(|| format!("invalid new project name '{}'", new_name))?;
+                store.rename_project(&old_norm, &new_norm)?;
+                let msg = format!("rename project {} → {}", old_norm, new_norm);
                 sync::git_commit(&store_path, &msg)?;
-                println!("Renamed '{}' → '{}' and committed.", old_name, new_name);
+                println!("Renamed '{}' → '{}' and committed.", old_norm, new_norm);
             }
         }
         Ok(())
     }
 
-    pub fn list_store(args: ListStoreArgs) -> anyhow::Result<()> {
+    pub fn list_project(args: ListProjectArgs) -> anyhow::Result<()> {
         let config = Config::load()?;
         let store_path = config.store_path();
         let store = Store::open(&store_path).context("store not initialized — run `polyrc init` first")?;
 
-        // Determine which project keys to show.
-        let all_projects = store.list_projects()?;
-        let keys: Vec<String> = if args.user {
-            vec![store::USER_PROJECT.to_string()]
-        } else if args.projects {
-            vec![store::PROJECTS_NAMESPACE.to_string()]
-        } else if let Some(ref p) = args.project {
-            vec![p.clone()]
-        } else {
-            // Show user first, then projects, then any other buckets
-            let mut ordered = vec![];
-            for preferred in [store::USER_PROJECT, store::PROJECTS_NAMESPACE] {
-                if all_projects.iter().any(|k| k == preferred) {
-                    ordered.push(preferred.to_string());
-                }
-            }
-            for k in &all_projects {
-                if k != store::USER_PROJECT && k != store::PROJECTS_NAMESPACE {
-                    ordered.push(k.clone());
-                }
-            }
-            ordered
-        };
-
-        let fmt_filter = args.format.as_ref().map(|f| f.as_str());
-        let mut grand_total = 0usize;
-
-        // Column widths
-        const W_NAME: usize = 28;
-        const W_SCOPE: usize = 7;
-        const W_FMT: usize = 10;
-        const W_ACT: usize = 10;
-        const W_DATE: usize = 10;
-        // PATH fills the rest
-
-        let header = format!(
-            "  {:<W_NAME$}  {:<W_SCOPE$}  {:<W_FMT$}  {:<W_ACT$}  {:<W_DATE$}  {}",
-            "NAME", "SCOPE", "FORMAT", "ACTIVATION", "UPDATED", "PATH"
-        );
-        let divider = "─".repeat(header.len());
-
-        for key in &keys {
-            let project_arg = Some(key.as_str());
-            let mut rules = store.load_rules(project_arg)?;
-
-            // Apply --format filter.
-            if let Some(fmt) = fmt_filter {
-                rules.retain(|r| r.source_format.as_deref() == Some(fmt));
-            }
-
+        if let Some(ref name) = args.name {
+            // Show rules for a specific project (name can be "user")
+            let rules = store.load_rules(Some(name))?;
             if rules.is_empty() {
-                continue;
+                println!("No rules in project '{}'.", name);
+                return Ok(());
             }
 
-            grand_total += rules.len();
-            println!("\nPROJECT: {}", key);
+            const W_NAME: usize = 28;
+            const W_SCOPE: usize = 7;
+            const W_FMT: usize = 10;
+            const W_ACT: usize = 10;
+            const W_DATE: usize = 10;
+
+            let header = format!(
+                "  {:<W_NAME$}  {:<W_SCOPE$}  {:<W_FMT$}  {:<W_ACT$}  {:<W_DATE$}  {}",
+                "NAME", "SCOPE", "FORMAT", "ACTIVATION", "UPDATED", "PATH"
+            );
+            let divider = "─".repeat(header.len());
+
+            println!("PROJECT: {} ({} rule(s))", name, rules.len());
             println!("{}", divider);
             println!("{}", header);
             println!("{}", divider);
 
             for rule in &rules {
-                let name = rule.name.as_deref().unwrap_or("<unnamed>");
-                let fmt_tag  = rule.source_format.as_deref().unwrap_or("?");
+                let rule_name = rule.name.as_deref().unwrap_or("<unnamed>");
+                let fmt_tag   = rule.source_format.as_deref().unwrap_or("?");
                 let scope_tag = format!("{:?}", rule.scope).to_lowercase();
-                let act_tag  = format!("{:?}", rule.activation).to_lowercase();
-                let updated  = rule.updated_at.as_deref().unwrap_or("?");
-                let date     = updated.get(..10).unwrap_or(updated);
-                let path     = format!("{}/{}.yaml", key, rule.filename_stem());
+                let act_tag   = format!("{:?}", rule.activation).to_lowercase();
+                let updated   = rule.updated_at.as_deref().unwrap_or("?");
+                let date      = updated.get(..10).unwrap_or(updated);
+                let path      = format!("{}/{}.yaml", name, rule.filename_stem());
 
                 println!(
                     "  {:<W_NAME$}  {:<W_SCOPE$}  {:<W_FMT$}  {:<W_ACT$}  {:<W_DATE$}  {}",
-                    name, scope_tag, fmt_tag, act_tag, date, path
+                    rule_name, scope_tag, fmt_tag, act_tag, date, path
                 );
 
                 if args.verbose {
-                    let preview_len = rule.content.len().min(300);
-                    let preview = &rule.content[..preview_len];
-                    for line in preview.lines().take(6) {
+                    // Print full content
+                    for line in rule.content.lines() {
                         println!("      {}", line);
-                    }
-                    if rule.content.len() > 300 || rule.content.lines().count() > 6 {
-                        println!("      … ({} chars total)", rule.content.len());
                     }
                     println!();
                 }
@@ -484,14 +477,35 @@ mod commands {
 
             println!("{}", divider);
             println!("  {} rule(s)", rules.len());
-        }
-
-        if grand_total == 0 {
-            println!("No rules found in the store matching the given filters.");
         } else {
-            println!("\nTotal: {} rule(s)", grand_total);
-        }
+            // List all projects
+            let all_projects = store.list_projects()?;
+            if all_projects.is_empty() {
+                println!("No projects in store.");
+                return Ok(());
+            }
 
+            // user first, then alphabetical
+            let mut ordered = all_projects.clone();
+            if let Some(pos) = ordered.iter().position(|n| n == store::USER_PROJECT) {
+                ordered.remove(pos);
+                ordered.insert(0, store::USER_PROJECT.to_string());
+            }
+
+            println!("Projects in store:");
+            for p in &ordered {
+                let rules = store.load_rules(Some(p)).unwrap_or_default();
+                if args.verbose {
+                    println!("  {} ({} rule(s)):", p, rules.len());
+                    for r in &rules {
+                        println!("    - {}", r.name.as_deref().unwrap_or("<unnamed>"));
+                    }
+                } else {
+                    println!("  {} ({} rule(s))", p, rules.len());
+                }
+            }
+            println!("\nTotal: {} project(s)", ordered.len());
+        }
         Ok(())
     }
 
@@ -501,14 +515,24 @@ mod commands {
         let store_path = config.store_path();
         let store = Store::open(&store_path).context("store not initialized — run `polyrc init` first")?;
 
-        // Determine namespace
-        let namespace = if args.namespace == "user" {
+        // Determine destination namespace
+        let namespace_owned;
+        let namespace: &str = if args.user {
             store::USER_PROJECT
+        } else if let Some(ref p) = args.project {
+            namespace_owned = normalize_project_name(p)
+                .with_context(|| format!("invalid project name '{}'", p))?;
+            &namespace_owned
         } else {
-            store::PROJECTS_NAMESPACE
+            anyhow::bail!("specify --user or --project <name> to choose where to store this rule");
         };
 
-        // Build the rule
+        let scope = if args.user {
+            Scope::User
+        } else {
+            Scope::Project
+        };
+
         let content = if let Some(ref file) = args.from_file {
             std::fs::read_to_string(file)
                 .with_context(|| format!("failed to read {}", file.display()))?
@@ -516,11 +540,6 @@ mod commands {
             anyhow::bail!("--from-file is required (interactive input not yet supported)");
         };
 
-        let scope = match args.scope {
-            ScopeArg::User    => crate::ir::Scope::User,
-            ScopeArg::Project => crate::ir::Scope::Project,
-            ScopeArg::Path    => crate::ir::Scope::Path,
-        };
         let activation = match args.activation {
             ActivationArg::Always    => Activation::Always,
             ActivationArg::OnDemand  => Activation::OnDemand,
@@ -542,7 +561,6 @@ mod commands {
             args.name, store_path.display(), namespace, args.name
         );
 
-        // Auto-commit
         sync::git_commit(&store_path, &format!("push-rule: {}", args.name))
             .context("git commit failed")?;
 
@@ -555,13 +573,34 @@ mod commands {
         let store_path = config.store_path();
         let store = Store::open(&store_path).context("store not initialized — run `polyrc init` first")?;
 
-        let (namespace, rule) = store.load_rule_by_name(&args.name)?
-            .with_context(|| format!("rule '{}' not found in store (checked projects/ and user/)", args.name))?;
+        // Determine which namespace to search
+        let search_ns: Option<String> = if args.user {
+            Some(store::USER_PROJECT.to_string())
+        } else if let Some(ref p) = args.project {
+            let norm = normalize_project_name(p)
+                .with_context(|| format!("invalid project name '{}'", p))?;
+            Some(norm)
+        } else {
+            None // search all
+        };
+
+        let (namespace, rule) = store.load_rule_by_name(&args.name, search_ns.as_deref())?
+            .with_context(|| {
+                let location = search_ns.as_deref()
+                    .map(|ns| format!("in project '{}'", ns))
+                    .unwrap_or_else(|| "in any project".to_string());
+                format!("rule '{}' not found {}", args.name, location)
+            })?;
 
         let fmt = crate::formats::Format::from_str(args.format.as_str())
             .with_context(|| format!("unknown format '{}'", args.format.as_str()))?;
         let writer = fmt.writer();
-        let target = std::env::current_dir().context("failed to get current directory")?;
+
+        let target = if let Some(ref out) = args.output {
+            out.clone()
+        } else {
+            std::env::current_dir().context("failed to get current directory")?
+        };
 
         writer.write(std::slice::from_ref(&rule), &target)
             .with_context(|| format!("failed to write rule as {}", fmt.name()))?;
@@ -594,21 +633,16 @@ mod commands {
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
-    /// Resolve the project key for store operations.
-    /// User-scope rules use `store::USER_PROJECT`; everything else uses the --project name.
-    fn project_key(project: Option<&str>, scope: &Option<String>) -> Option<String> {
-        if scope.as_deref().map(|s| s == "user").unwrap_or(false) {
-            return Some(store::USER_PROJECT.to_string());
-        }
-        project.map(str::to_string)
-    }
-
-    fn parse_scope(s: &str) -> anyhow::Result<Scope> {
-        match s.to_lowercase().as_str() {
-            "user" => Ok(Scope::User),
-            "project" => Ok(Scope::Project),
-            "path" => Ok(Scope::Path),
-            other => anyhow::bail!("unknown scope '{}': expected user, project, or path", other),
+    /// Resolve (user_mode, project_key) from --user / --project flags.
+    /// Errors if neither is given.
+    fn resolve_routing(user: bool, project: Option<&str>) -> anyhow::Result<(bool, String)> {
+        if user {
+            Ok((true, store::USER_PROJECT.to_string()))
+        } else if let Some(p) = project {
+            let norm = normalize_project_name(p)?;
+            Ok((false, norm))
+        } else {
+            anyhow::bail!("specify --user or --project <name> to choose where to store/load rules")
         }
     }
 
