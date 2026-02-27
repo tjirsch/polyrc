@@ -1,12 +1,10 @@
-pub mod manifest;
-
 use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 use walkdir::WalkDir;
+use crate::config::Config;
 use crate::error::{PolyrcError, Result};
 use crate::ir::Rule;
-pub use manifest::Manifest;
 
 const RULES_DIR: &str = "rules";
 /// Directory name for user-scope rules (always-on ambient + on-demand commands).
@@ -23,18 +21,16 @@ pub struct Store {
 }
 
 impl Store {
-    /// Open an existing store.
+    /// Open an existing store at `store_path`.
     ///
-    /// `store_path` is the git repo root (e.g. `~/polyrc/store`).
-    /// `polyrc_dir` is the parent config dir where `polyrc.toml` lives
-    /// (e.g. `~/polyrc/`).  The manifest is intentionally kept outside the
-    /// git repo so it is not versioned as part of the rule history.
-    pub fn open(store_path: &Path, polyrc_dir: &Path) -> Result<Self> {
-        let manifest_path = polyrc_dir.join("polyrc.toml");
-        if !manifest_path.exists() {
+    /// Reads `~/polyrc/config.toml` to verify the store has been initialised.
+    /// The store path itself is a plain git repo; all polyrc config lives in
+    /// `config.toml` outside of it.
+    pub fn open(store_path: &Path) -> Result<Self> {
+        let config = Config::load().map_err(|_| PolyrcError::StoreNotFound)?;
+        if !config.store_initialized() {
             return Err(PolyrcError::StoreNotFound);
         }
-        Manifest::load(polyrc_dir)?;
         let store = Self { path: store_path.to_path_buf() };
         store.migrate_legacy_user_dir()?;
         Ok(store)
@@ -258,26 +254,21 @@ impl Store {
     }
 }
 
-/// Initialize a new store.
+/// Initialize a new store at `store_path`.
 ///
-/// `store_path` — the git repo root (e.g. `~/polyrc/store`).
-/// `polyrc_dir` — the config dir where `polyrc.toml` is written
-///               (e.g. `~/polyrc/`), kept outside the git repo.
-pub fn init_store(store_path: &Path, polyrc_dir: &Path, remote_url: Option<&str>) -> Result<()> {
+/// Creates the git repo and marks the store as initialised in `config.toml`.
+/// All polyrc config (version, created_at, remote_url) is written there —
+/// nothing polyrc-specific is put inside the git repo.
+pub fn init_store(store_path: &Path, remote_url: Option<&str>) -> Result<()> {
     fs::create_dir_all(store_path).map_err(|e| PolyrcError::Io {
         path: store_path.to_path_buf(),
         source: e,
     })?;
-    fs::create_dir_all(polyrc_dir).map_err(|e| PolyrcError::Io {
-        path: polyrc_dir.to_path_buf(),
-        source: e,
-    })?;
 
-    let mut manifest = Manifest::new();
-    if let Some(url) = remote_url {
-        manifest.set_remote_url(url);
-    }
-    manifest.save(polyrc_dir)?;
+    // Write version + optional remote URL into config.toml (not the store repo)
+    let mut config = Config::load().unwrap_or_default();
+    config.init_store_config(remote_url);
+    config.save()?;
 
     // git init (only if not already a repo)
     let git_dir = store_path.join(".git");

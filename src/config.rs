@@ -13,16 +13,23 @@ pub struct Config {
     pub preferred_editor: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct StoreConfig {
-    /// Path to the local store git repo. Defaults to ~/.polyrc/store
+    /// Path to the local store git repo. Defaults to ~/polyrc/store.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
-}
 
-impl Default for StoreConfig {
-    fn default() -> Self {
-        Self { path: None }
-    }
+    /// Store format version — set on `polyrc init`, absent if not yet initialised.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+
+    /// RFC3339 timestamp of store creation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+
+    /// Optional git remote URL for sync.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote_url: Option<String>,
 }
 
 impl Config {
@@ -68,6 +75,20 @@ impl Config {
     pub fn set_store_path(&mut self, path: &Path) -> Result<()> {
         self.store.path = Some(path.to_string_lossy().to_string());
         self.save()
+    }
+
+    /// Returns true if the store has been initialised (version is set).
+    pub fn store_initialized(&self) -> bool {
+        self.store.version.is_some()
+    }
+
+    /// Mark the store as initialised with version + timestamp, and optionally set remote URL.
+    pub fn init_store_config(&mut self, remote_url: Option<&str>) {
+        self.store.version = Some("1".to_string());
+        self.store.created_at = Some(chrono::Utc::now().to_rfc3339());
+        if let Some(url) = remote_url {
+            self.store.remote_url = Some(url.to_string());
+        }
     }
 }
 

@@ -52,7 +52,7 @@ pub fn run(args: ConvertArgs) -> anyhow::Result<()> {
 fn run_via_store(args: ConvertArgs, project: String) -> anyhow::Result<()> {
     let config = Config::load()?;
     let store_path = config.store_path();
-    let store = Store::open(&store_path, &crate::config::polyrc_dir())
+    let store = Store::open(&store_path)
         .context("store not initialized — run `polyrc init` first")?;
 
     let from_name = args.from.as_str();

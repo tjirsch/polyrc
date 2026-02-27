@@ -143,25 +143,15 @@ mod commands {
         // Reading the saved config here would silently reuse stale paths
         // from previous interrupted runs.
         let store_path = args.store.unwrap_or_else(crate::config::default_store_path);
-        let polyrc_dir = crate::config::polyrc_dir();
 
         if let Some(url) = &args.repo {
-            // Clone remote repo into store path
             println!("Cloning {} → {}", url, store_path.display());
             sync::git_clone(url, &store_path)
                 .with_context(|| format!("failed to clone {url}"))?;
-            // Write / update polyrc.toml in the polyrc config dir (not the store)
-            let manifest_path = polyrc_dir.join("polyrc.toml");
-            if !manifest_path.exists() {
-                store::init_store(&store_path, &polyrc_dir, Some(url))?;
-            } else {
-                let mut manifest = crate::store::manifest::Manifest::load(&polyrc_dir)?;
-                manifest.set_remote_url(url);
-                manifest.save(&polyrc_dir)?;
-            }
+            store::init_store(&store_path, Some(url))?;
         } else {
             println!("Initializing local store at {}", store_path.display());
-            store::init_store(&store_path, &polyrc_dir, None)?;
+            store::init_store(&store_path, None)?;
         }
 
         config.set_store_path(&store_path)?;
@@ -172,7 +162,7 @@ mod commands {
     pub fn push_format(args: PushFormatArgs) -> anyhow::Result<()> {
         let config = Config::load()?;
         let store_path = config.store_path();
-        let store = Store::open(&store_path, &crate::config::polyrc_dir()).context("store not initialized — run `polyrc init` first")?;
+        let store = Store::open(&store_path).context("store not initialized — run `polyrc init` first")?;
 
         let fmt_name = args.format.as_str();
         let fmt = Format::from_str(fmt_name)
@@ -218,7 +208,7 @@ mod commands {
     pub fn pull_format(args: PullFormatArgs) -> anyhow::Result<()> {
         let config = Config::load()?;
         let store_path = config.store_path();
-        let store = Store::open(&store_path, &crate::config::polyrc_dir()).context("store not initialized — run `polyrc init` first")?;
+        let store = Store::open(&store_path).context("store not initialized — run `polyrc init` first")?;
 
         let fmt_name = args.format.as_str();
         let fmt = Format::from_str(fmt_name)
@@ -253,7 +243,7 @@ mod commands {
     pub fn sync_store() -> anyhow::Result<()> {
         let config = Config::load()?;
         let store_path = config.store_path();
-        let store = Store::open(&store_path, &crate::config::polyrc_dir()).context("store not initialized")?;
+        let store = Store::open(&store_path).context("store not initialized")?;
 
         // 1. Pull remote changes in first
         println!("Pulling from remote...");
@@ -278,7 +268,7 @@ mod commands {
     pub fn project(args: ProjectArgs) -> anyhow::Result<()> {
         let config = Config::load()?;
         let store_path = config.store_path();
-        let store = Store::open(&store_path, &crate::config::polyrc_dir()).context("store not initialized")?;
+        let store = Store::open(&store_path).context("store not initialized")?;
 
         match args.command {
             ProjectCommands::List => {
@@ -306,7 +296,7 @@ mod commands {
     pub fn list_store(args: ListStoreArgs) -> anyhow::Result<()> {
         let config = Config::load()?;
         let store_path = config.store_path();
-        let store = Store::open(&store_path, &crate::config::polyrc_dir()).context("store not initialized — run `polyrc init` first")?;
+        let store = Store::open(&store_path).context("store not initialized — run `polyrc init` first")?;
 
         // Determine which project keys to show.
         let all_projects = store.list_projects()?;
@@ -412,7 +402,7 @@ mod commands {
         use crate::ir::{Activation, Rule};
         let config = Config::load()?;
         let store_path = config.store_path();
-        let store = Store::open(&store_path, &crate::config::polyrc_dir()).context("store not initialized — run `polyrc init` first")?;
+        let store = Store::open(&store_path).context("store not initialized — run `polyrc init` first")?;
 
         // Determine namespace
         let namespace = if args.namespace == "user" {
@@ -466,7 +456,7 @@ mod commands {
     pub fn pull_rule(args: PullRuleArgs) -> anyhow::Result<()> {
         let config = Config::load()?;
         let store_path = config.store_path();
-        let store = Store::open(&store_path, &crate::config::polyrc_dir()).context("store not initialized — run `polyrc init` first")?;
+        let store = Store::open(&store_path).context("store not initialized — run `polyrc init` first")?;
 
         let (namespace, rule) = store.load_rule_by_name(&args.name)?
             .with_context(|| format!("rule '{}' not found in store (checked projects/ and user/)", args.name))?;
