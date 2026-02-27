@@ -145,25 +145,20 @@ mod commands {
         let store_path = args.store.unwrap_or_else(crate::config::default_store_path);
 
         if let Some(url) = &args.repo {
-            // Clone remote repo into store path
             println!("Cloning {} → {}", url, store_path.display());
             sync::git_clone(url, &store_path)
                 .with_context(|| format!("failed to clone {url}"))?;
-            // If polyrc.toml doesn't exist in the clone, init it
-            if !store_path.join("polyrc.toml").exists() {
-                store::init_store(&store_path, Some(url))?;
-            } else {
-                // Update the manifest with the remote URL
-                let mut manifest = crate::store::manifest::Manifest::load(&store_path)?;
-                manifest.set_remote_url(url);
-                manifest.save(&store_path)?;
-            }
+            store::init_git(&store_path)?;
+            config.init_store_config(Some(url));
         } else {
             println!("Initializing local store at {}", store_path.display());
-            store::init_store(&store_path, None)?;
+            store::init_git(&store_path)?;
+            config.init_store_config(None);
         }
 
-        config.set_store_path(&store_path)?;
+        // Set store path + version/remote in a single save — no double-load overwrite
+        config.store.path = Some(store_path.to_string_lossy().to_string());
+        config.save().context("failed to save config")?;
         println!("Store ready at {}", store_path.display());
         Ok(())
     }

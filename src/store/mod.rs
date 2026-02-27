@@ -1,12 +1,10 @@
-pub mod manifest;
-
 use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 use walkdir::WalkDir;
+use crate::config::Config;
 use crate::error::{PolyrcError, Result};
 use crate::ir::Rule;
-pub use manifest::Manifest;
 
 const RULES_DIR: &str = "rules";
 /// Directory name for user-scope rules (always-on ambient + on-demand commands).
@@ -23,15 +21,17 @@ pub struct Store {
 }
 
 impl Store {
-    /// Open an existing store at `path`. Errors if the store is not initialized.
-    /// Automatically migrates legacy `_user/` directory to `user/` if present.
-    pub fn open(path: &Path) -> Result<Self> {
-        let manifest_path = path.join("polyrc.toml");
-        if !manifest_path.exists() {
+    /// Open an existing store at `store_path`.
+    ///
+    /// Reads `~/polyrc/config.toml` to verify the store has been initialised.
+    /// The store path itself is a plain git repo; all polyrc config lives in
+    /// `config.toml` outside of it.
+    pub fn open(store_path: &Path) -> Result<Self> {
+        let config = Config::load().map_err(|_| PolyrcError::StoreNotFound)?;
+        if !config.store_initialized() {
             return Err(PolyrcError::StoreNotFound);
         }
-        Manifest::load(path)?;
-        let store = Self { path: path.to_path_buf() };
+        let store = Self { path: store_path.to_path_buf() };
         store.migrate_legacy_user_dir()?;
         Ok(store)
     }
@@ -254,23 +254,19 @@ impl Store {
     }
 }
 
-/// Initialize a new store at `path` (git init + manifest).
-pub fn init_store(path: &Path, remote_url: Option<&str>) -> Result<()> {
-    fs::create_dir_all(path).map_err(|e| PolyrcError::Io {
-        path: path.to_path_buf(),
+/// Set up the git repo for the store at `store_path`.
+///
+/// Only handles the filesystem + git side. Config fields (version, remote_url)
+/// are written by the caller so there is no double-load / overwrite race.
+pub fn init_git(store_path: &Path) -> Result<()> {
+    fs::create_dir_all(store_path).map_err(|e| PolyrcError::Io {
+        path: store_path.to_path_buf(),
         source: e,
     })?;
 
-    let mut manifest = Manifest::new();
-    if let Some(url) = remote_url {
-        manifest.set_remote_url(url);
-    }
-    manifest.save(path)?;
-
-    // git init (only if not already a repo)
-    let git_dir = path.join(".git");
+    let git_dir = store_path.join(".git");
     if !git_dir.exists() {
-        crate::sync::git_init(path)?;
+        crate::sync::git_init(store_path)?;
     }
 
     Ok(())
