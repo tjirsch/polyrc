@@ -72,6 +72,14 @@ pub enum Commands {
     #[command(name = "list-store")]
     ListStore(ListStoreArgs),
 
+    /// Save a rule or file into the store library (projects/ or user/)
+    #[command(name = "save-rule")]
+    SaveRule(SaveRuleArgs),
+
+    /// Pull a named rule from the store and write it to the current project
+    #[command(name = "pull-rule")]
+    PullRule(PullRuleArgs),
+
     /// Discover installed user-level configs for all (or one) format
     Discover(DiscoverArgs),
 
@@ -237,11 +245,15 @@ pub struct SetEditorArgs {
 
 #[derive(clap::Args, Debug)]
 pub struct ListStoreArgs {
-    /// Only show user-scope rules (project key = _user)
+    /// Only show user-scope rules
     #[arg(long, conflicts_with = "project")]
     pub user: bool,
 
-    /// Only show rules in this project
+    /// Only show rules in the projects library
+    #[arg(long, conflicts_with = "user")]
+    pub projects: bool,
+
+    /// Only show rules matching this name (substring match)
     #[arg(long)]
     pub project: Option<String>,
 
@@ -252,6 +264,61 @@ pub struct ListStoreArgs {
     /// Show full rule content instead of a one-line summary
     #[arg(long)]
     pub verbose: bool,
+}
+
+// ── save-rule ─────────────────────────────────────────────────────────────────
+
+#[derive(clap::Args, Debug)]
+pub struct SaveRuleArgs {
+    /// Name for the rule in the store (e.g. "rust-gitignore")
+    pub name: String,
+
+    /// Read rule content from this file (auto-detects format from extension)
+    #[arg(long)]
+    pub from_file: Option<std::path::PathBuf>,
+
+    /// Namespace to save into: "projects" (default) or "user"
+    #[arg(long, default_value = "projects")]
+    pub namespace: String,
+
+    /// Scope of the rule
+    #[arg(long, value_enum, default_value = "project")]
+    pub scope: ScopeArg,
+
+    /// Activation mode of the rule
+    #[arg(long, value_enum, default_value = "always")]
+    pub activation: ActivationArg,
+}
+
+#[derive(clap::ValueEnum, Clone, Debug)]
+pub enum ScopeArg {
+    User,
+    Project,
+    Path,
+}
+
+#[derive(clap::ValueEnum, Clone, Debug)]
+pub enum ActivationArg {
+    Always,
+    OnDemand,
+    Glob,
+    AiDecides,
+}
+
+// ── pull-rule ─────────────────────────────────────────────────────────────────
+
+#[derive(clap::Args, Debug)]
+pub struct PullRuleArgs {
+    /// Name of the rule to pull from the store (e.g. "rust-gitignore")
+    pub name: String,
+
+    /// Target format to write the rule as
+    #[arg(long, value_enum, required = true)]
+    pub format: FormatArg,
+
+    /// Overwrite existing file without asking
+    #[arg(long)]
+    pub force: bool,
 }
 
 // ── discover ──────────────────────────────────────────────────────────────────

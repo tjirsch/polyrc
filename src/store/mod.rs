@@ -9,7 +9,12 @@ use crate::ir::Rule;
 pub use manifest::Manifest;
 
 const RULES_DIR: &str = "rules";
-const USER_PROJECT: &str = "_user";
+/// Directory name for user-scope rules (always-on ambient + on-demand commands).
+pub const USER_PROJECT: &str = "user";
+/// Legacy name — migrated to USER_PROJECT on first open.
+const USER_PROJECT_LEGACY: &str = "_user";
+/// Directory name for reusable named recipes (pulled into any project on demand).
+pub const PROJECTS_NAMESPACE: &str = "projects";
 
 /// The polyrc local store — a git repo containing IR rules as YAML files.
 pub struct Store {
@@ -19,13 +24,29 @@ pub struct Store {
 
 impl Store {
     /// Open an existing store at `path`. Errors if the store is not initialized.
+    /// Automatically migrates legacy `_user/` directory to `user/` if present.
     pub fn open(path: &Path) -> Result<Self> {
         let manifest_path = path.join("polyrc.toml");
         if !manifest_path.exists() {
             return Err(PolyrcError::StoreNotFound);
         }
         Manifest::load(path)?;
-        Ok(Self { path: path.to_path_buf() })
+        let store = Self { path: path.to_path_buf() };
+        store.migrate_legacy_user_dir()?;
+        Ok(store)
+    }
+
+    /// Rename `rules/_user/` → `rules/user/` if it still exists.
+    fn migrate_legacy_user_dir(&self) -> Result<()> {
+        let legacy = self.path.join(RULES_DIR).join(USER_PROJECT_LEGACY);
+        let current = self.path.join(RULES_DIR).join(USER_PROJECT);
+        if legacy.exists() && !current.exists() {
+            fs::rename(&legacy, &current).map_err(|e| PolyrcError::Io {
+                path: legacy.clone(),
+                source: e,
+            })?;
+        }
+        Ok(())
     }
 
     /// Load all rules for a given project key from the store.
@@ -122,6 +143,65 @@ impl Store {
             stored.push(r);
         }
         Ok(stored)
+    }
+
+    /// Find a rule by name, searching `projects/` then `user/`.
+    /// Returns `(namespace_key, rule)`.
+    pub fn load_rule_by_name(&self, name: &str) -> Result<Option<(String, Rule)>> {
+        for ns in [PROJECTS_NAMESPACE, USER_PROJECT] {
+            let dir = self.path.join(RULES_DIR).join(ns);
+            if !dir.exists() {
+                continue;
+            }
+            for entry in WalkDir::new(&dir).min_depth(1).max_depth(1).sort_by_file_name() {
+                let entry = entry.map_err(|e| PolyrcError::Io { path: dir.clone(), source: e.into() })?;
+                let p = entry.path();
+                if p.extension().and_then(|e| e.to_str()) != Some("yml") {
+                    continue;
+                }
+                let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                if stem == name {
+                    let raw = fs::read_to_string(p).map_err(|e| PolyrcError::Io { path: p.to_path_buf(), source: e })?;
+                    let rule: Rule = serde_yml::from_str(&raw).map_err(|e| PolyrcError::YamlParse { path: p.to_path_buf(), source: e })?;
+                    return Ok(Some((ns.to_string(), rule)));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// Save a single named rule into the given namespace (`projects` or `user`).
+    /// Returns the stored rule (with id and timestamps set).
+    pub fn save_rule_to_namespace(&self, namespace: &str, name: &str, rule: &Rule) -> Result<Rule> {
+        let dir = self.path.join(RULES_DIR).join(namespace);
+        fs::create_dir_all(&dir).map_err(|e| PolyrcError::Io { path: dir.clone(), source: e })?;
+
+        let now = chrono::Utc::now().to_rfc3339();
+
+        // Preserve existing id / created_at if rule already exists
+        let existing = self.load_rule_by_name(name).unwrap_or(None);
+        let mut r = rule.clone();
+        r.project = Some(namespace.to_string());
+        r.store_version = "1".to_string();
+
+        match existing {
+            Some((_, ex)) => {
+                r.id = ex.id;
+                r.created_at = ex.created_at;
+            }
+            None => {
+                if r.id.is_empty() { r.id = Uuid::new_v4().to_string(); }
+                r.created_at = Some(now.clone());
+            }
+        }
+        r.updated_at = Some(now);
+        if r.name.is_none() { r.name = Some(name.to_string()); }
+
+        let filename = format!("{}.yml", name);
+        let file = dir.join(&filename);
+        let content = serde_yml::to_string(&r).map_err(|e| PolyrcError::YamlParse { path: file.clone(), source: e })?;
+        fs::write(&file, content).map_err(|e| PolyrcError::Io { path: file, source: e })?;
+        Ok(r)
     }
 
     /// List all project keys in the store (directory names under rules/).

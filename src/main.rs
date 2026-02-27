@@ -33,6 +33,8 @@ fn main() -> anyhow::Result<()> {
         cli::Commands::PullFormat(a) => commands::pull_format(a)?,
         cli::Commands::SyncStore => commands::sync_store()?,
         cli::Commands::ListStore(a) => commands::list_store(a)?,
+        cli::Commands::SaveRule(a) => commands::save_rule(a)?,
+        cli::Commands::PullRule(a) => commands::pull_rule(a)?,
         cli::Commands::Project(a) => commands::project(a)?,
         cli::Commands::Completion { shell, install } => {
             run_completion(&shell, install)
@@ -127,7 +129,7 @@ fn completion_install_path(shell: clap_complete::Shell) -> anyhow::Result<(std::
 
 mod commands {
     use anyhow::Context;
-    use crate::cli::{InitArgs, ListStoreArgs, ProjectArgs, ProjectCommands, PullFormatArgs, PushFormatArgs, SetEditorArgs};
+    use crate::cli::{ActivationArg, InitArgs, ListStoreArgs, ProjectArgs, ProjectCommands, PullFormatArgs, PullRuleArgs, PushFormatArgs, SaveRuleArgs, ScopeArg, SetEditorArgs};
     use crate::config::Config;
     use crate::formats::Format;
     use crate::ir::Scope;
@@ -193,7 +195,7 @@ mod commands {
 
         if args.dry_run {
             println!("Dry run: {} rule(s) from {} → store/{}", rules.len(), fmt_name,
-                project_key.as_deref().unwrap_or("_user"));
+                project_key.as_deref().unwrap_or(store::USER_PROJECT));
             print_rules_preview(&rules);
             return Ok(());
         }
@@ -308,11 +310,25 @@ mod commands {
         // Determine which project keys to show.
         let all_projects = store.list_projects()?;
         let keys: Vec<String> = if args.user {
-            vec!["_user".to_string()]
+            vec![store::USER_PROJECT.to_string()]
+        } else if args.projects {
+            vec![store::PROJECTS_NAMESPACE.to_string()]
         } else if let Some(ref p) = args.project {
             vec![p.clone()]
         } else {
-            all_projects
+            // Show user first, then projects, then any other buckets
+            let mut ordered = vec![];
+            for preferred in [store::USER_PROJECT, store::PROJECTS_NAMESPACE] {
+                if all_projects.iter().any(|k| k == preferred) {
+                    ordered.push(preferred.to_string());
+                }
+            }
+            for k in &all_projects {
+                if k != store::USER_PROJECT && k != store::PROJECTS_NAMESPACE {
+                    ordered.push(k.clone());
+                }
+            }
+            ordered
         };
 
         let fmt_filter = args.format.as_ref().map(|f| f.as_str());
@@ -333,8 +349,7 @@ mod commands {
         let divider = "─".repeat(header.len());
 
         for key in &keys {
-            // load_rules takes Option<&str>; None maps to _user dir
-            let project_arg = if key == "_user" { None } else { Some(key.as_str()) };
+            let project_arg = Some(key.as_str());
             let mut rules = store.load_rules(project_arg)?;
 
             // Apply --format filter.
@@ -347,8 +362,7 @@ mod commands {
             }
 
             grand_total += rules.len();
-            let label = if key == "_user" { "user".to_string() } else { key.clone() };
-            println!("\nPROJECT: {}", label);
+            println!("\nPROJECT: {}", key);
             println!("{}", divider);
             println!("{}", header);
             println!("{}", divider);
@@ -393,6 +407,84 @@ mod commands {
         Ok(())
     }
 
+    pub fn save_rule(args: SaveRuleArgs) -> anyhow::Result<()> {
+        use crate::ir::{Activation, Rule};
+        let config = Config::load()?;
+        let store_path = config.store_path();
+        let store = Store::open(&store_path).context("store not initialized — run `polyrc init` first")?;
+
+        // Determine namespace
+        let namespace = if args.namespace == "user" {
+            store::USER_PROJECT
+        } else {
+            store::PROJECTS_NAMESPACE
+        };
+
+        // Build the rule
+        let content = if let Some(ref file) = args.from_file {
+            std::fs::read_to_string(file)
+                .with_context(|| format!("failed to read {}", file.display()))?
+        } else {
+            anyhow::bail!("--from-file is required (interactive input not yet supported)");
+        };
+
+        let scope = match args.scope {
+            ScopeArg::User    => crate::ir::Scope::User,
+            ScopeArg::Project => crate::ir::Scope::Project,
+            ScopeArg::Path    => crate::ir::Scope::Path,
+        };
+        let activation = match args.activation {
+            ActivationArg::Always    => Activation::Always,
+            ActivationArg::OnDemand  => Activation::OnDemand,
+            ActivationArg::Glob      => Activation::Glob,
+            ActivationArg::AiDecides => Activation::AiDecides,
+        };
+
+        let rule = Rule {
+            name: Some(args.name.clone()),
+            scope,
+            activation,
+            content: content.trim_end().to_string(),
+            ..Default::default()
+        };
+
+        let stored = store.save_rule_to_namespace(namespace, &args.name, &rule)?;
+        println!(
+            "Saved '{}' → {}/rules/{}/{}.yml",
+            args.name, store_path.display(), namespace, args.name
+        );
+
+        // Auto-commit
+        sync::git_commit(&store_path, &format!("save-rule: {}", args.name))
+            .context("git commit failed")?;
+
+        println!("Stored: {} ({})", stored.name.as_deref().unwrap_or(&args.name), namespace);
+        Ok(())
+    }
+
+    pub fn pull_rule(args: PullRuleArgs) -> anyhow::Result<()> {
+        let config = Config::load()?;
+        let store_path = config.store_path();
+        let store = Store::open(&store_path).context("store not initialized — run `polyrc init` first")?;
+
+        let (namespace, rule) = store.load_rule_by_name(&args.name)?
+            .with_context(|| format!("rule '{}' not found in store (checked projects/ and user/)", args.name))?;
+
+        let fmt = crate::formats::Format::from_str(args.format.as_str())
+            .with_context(|| format!("unknown format '{}'", args.format.as_str()))?;
+        let writer = fmt.writer();
+        let target = std::env::current_dir().context("failed to get current directory")?;
+
+        writer.write(std::slice::from_ref(&rule), &target)
+            .with_context(|| format!("failed to write rule as {}", fmt.name()))?;
+
+        println!(
+            "Pulled '{}' from {} → {} format in {}",
+            args.name, namespace, fmt.name(), target.display()
+        );
+        Ok(())
+    }
+
     pub fn set_editor(args: SetEditorArgs) -> anyhow::Result<()> {
         let mut config = Config::load()?;
         if args.clear {
@@ -415,10 +507,10 @@ mod commands {
     // ── helpers ──────────────────────────────────────────────────────────────
 
     /// Resolve the project key for store operations.
-    /// User-scope rules use `_user`; everything else uses the --project name (or None).
+    /// User-scope rules use `store::USER_PROJECT`; everything else uses the --project name.
     fn project_key(project: Option<&str>, scope: &Option<String>) -> Option<String> {
         if scope.as_deref().map(|s| s == "user").unwrap_or(false) {
-            return None; // maps to _user dir
+            return Some(store::USER_PROJECT.to_string());
         }
         project.map(str::to_string)
     }
