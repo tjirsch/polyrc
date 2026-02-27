@@ -23,15 +23,19 @@ pub struct Store {
 }
 
 impl Store {
-    /// Open an existing store at `path`. Errors if the store is not initialized.
-    /// Automatically migrates legacy `_user/` directory to `user/` if present.
-    pub fn open(path: &Path) -> Result<Self> {
-        let manifest_path = path.join("polyrc.toml");
+    /// Open an existing store.
+    ///
+    /// `store_path` is the git repo root (e.g. `~/polyrc/store`).
+    /// `polyrc_dir` is the parent config dir where `polyrc.toml` lives
+    /// (e.g. `~/polyrc/`).  The manifest is intentionally kept outside the
+    /// git repo so it is not versioned as part of the rule history.
+    pub fn open(store_path: &Path, polyrc_dir: &Path) -> Result<Self> {
+        let manifest_path = polyrc_dir.join("polyrc.toml");
         if !manifest_path.exists() {
             return Err(PolyrcError::StoreNotFound);
         }
-        Manifest::load(path)?;
-        let store = Self { path: path.to_path_buf() };
+        Manifest::load(polyrc_dir)?;
+        let store = Self { path: store_path.to_path_buf() };
         store.migrate_legacy_user_dir()?;
         Ok(store)
     }
@@ -254,10 +258,18 @@ impl Store {
     }
 }
 
-/// Initialize a new store at `path` (git init + manifest).
-pub fn init_store(path: &Path, remote_url: Option<&str>) -> Result<()> {
-    fs::create_dir_all(path).map_err(|e| PolyrcError::Io {
-        path: path.to_path_buf(),
+/// Initialize a new store.
+///
+/// `store_path` — the git repo root (e.g. `~/polyrc/store`).
+/// `polyrc_dir` — the config dir where `polyrc.toml` is written
+///               (e.g. `~/polyrc/`), kept outside the git repo.
+pub fn init_store(store_path: &Path, polyrc_dir: &Path, remote_url: Option<&str>) -> Result<()> {
+    fs::create_dir_all(store_path).map_err(|e| PolyrcError::Io {
+        path: store_path.to_path_buf(),
+        source: e,
+    })?;
+    fs::create_dir_all(polyrc_dir).map_err(|e| PolyrcError::Io {
+        path: polyrc_dir.to_path_buf(),
         source: e,
     })?;
 
@@ -265,12 +277,12 @@ pub fn init_store(path: &Path, remote_url: Option<&str>) -> Result<()> {
     if let Some(url) = remote_url {
         manifest.set_remote_url(url);
     }
-    manifest.save(path)?;
+    manifest.save(polyrc_dir)?;
 
     // git init (only if not already a repo)
-    let git_dir = path.join(".git");
+    let git_dir = store_path.join(".git");
     if !git_dir.exists() {
-        crate::sync::git_init(path)?;
+        crate::sync::git_init(store_path)?;
     }
 
     Ok(())
