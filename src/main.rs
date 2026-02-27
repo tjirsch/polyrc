@@ -318,6 +318,20 @@ mod commands {
         let fmt_filter = args.format.as_ref().map(|f| f.as_str());
         let mut grand_total = 0usize;
 
+        // Column widths
+        const W_NAME: usize = 28;
+        const W_SCOPE: usize = 7;
+        const W_FMT: usize = 10;
+        const W_ACT: usize = 10;
+        const W_DATE: usize = 10;
+        // PATH fills the rest
+
+        let header = format!(
+            "  {:<W_NAME$}  {:<W_SCOPE$}  {:<W_FMT$}  {:<W_ACT$}  {:<W_DATE$}  {}",
+            "NAME", "SCOPE", "FORMAT", "ACTIVATION", "UPDATED", "PATH"
+        );
+        let divider = "─".repeat(header.len());
+
         for key in &keys {
             // load_rules takes Option<&str>; None maps to _user dir
             let project_arg = if key == "_user" { None } else { Some(key.as_str()) };
@@ -333,21 +347,24 @@ mod commands {
             }
 
             grand_total += rules.len();
-            let label = if key == "_user" { "_user (user-scope)".to_string() } else { key.clone() };
-            println!("\n{} — {} rule(s):", label, rules.len());
-            println!("{}", "─".repeat(60));
+            let label = if key == "_user" { "user".to_string() } else { key.clone() };
+            println!("\nPROJECT: {}", label);
+            println!("{}", divider);
+            println!("{}", header);
+            println!("{}", divider);
 
             for rule in &rules {
                 let name = rule.name.as_deref().unwrap_or("<unnamed>");
-                let fmt_tag = rule.source_format.as_deref().unwrap_or("?");
+                let fmt_tag  = rule.source_format.as_deref().unwrap_or("?");
                 let scope_tag = format!("{:?}", rule.scope).to_lowercase();
-                let activation_tag = format!("{:?}", rule.activation).to_lowercase();
-                let updated = rule.updated_at.as_deref().unwrap_or("?");
-                let date = updated.get(..10).unwrap_or(updated); // trim to YYYY-MM-DD
+                let act_tag  = format!("{:?}", rule.activation).to_lowercase();
+                let updated  = rule.updated_at.as_deref().unwrap_or("?");
+                let date     = updated.get(..10).unwrap_or(updated);
+                let path     = format!("rules/{}/{}.yml", key, rule.filename_stem());
 
                 println!(
-                    "  {:<30} [{:<10}] {}/{:<10} {}",
-                    name, fmt_tag, scope_tag, activation_tag, date
+                    "  {:<W_NAME$}  {:<W_SCOPE$}  {:<W_FMT$}  {:<W_ACT$}  {:<W_DATE$}  {}",
+                    name, scope_tag, fmt_tag, act_tag, date, path
                 );
 
                 if args.verbose {
@@ -362,6 +379,9 @@ mod commands {
                     println!();
                 }
             }
+
+            println!("{}", divider);
+            println!("  {} rule(s)", rules.len());
         }
 
         if grand_total == 0 {
