@@ -165,7 +165,7 @@ pub struct PushFormatArgs {
     #[arg(long)]
     pub scope: Option<String>,
 
-    /// Source project root directory
+    /// Source project root directory (auto-detected for --scope user when not set)
     #[arg(long, default_value = ".")]
     pub input: PathBuf,
 
@@ -194,7 +194,7 @@ pub struct PullFormatArgs {
     #[arg(long)]
     pub scope: Option<String>,
 
-    /// Target project root directory
+    /// Target project root directory (auto-detected for --scope user when not set)
     #[arg(long, default_value = ".")]
     pub output: PathBuf,
 
@@ -333,11 +333,19 @@ pub struct PullRuleArgs {
 
 #[derive(clap::Args, Debug)]
 pub struct DiscoverArgs {
-    /// Discover user-level configs (from ~/, ~/Library/Application Support, etc.)
-    #[arg(long)]
+    /// Scope to search: user (project scope planned for future)
+    #[arg(long, conflicts_with = "user")]
+    pub scope: Option<String>,
+
+    /// Discover user-level configs — shorthand for --scope user
+    #[arg(long, conflicts_with = "scope")]
     pub user: bool,
 
+    /// Discover all supported formats (default when --format is omitted)
+    #[arg(long, conflicts_with = "format")]
+    pub all: bool,
+
     /// Limit to one format
-    #[arg(long, value_enum)]
+    #[arg(long, value_enum, conflicts_with = "all")]
     pub format: Option<FormatArg>,
 }

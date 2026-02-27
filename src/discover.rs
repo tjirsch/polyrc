@@ -122,11 +122,20 @@ pub fn user_locations(fmt: &Format) -> Vec<UserLocation> {
 // ── command entry point ───────────────────────────────────────────────────────
 
 pub fn run(args: DiscoverArgs) -> Result<()> {
-    if !args.user {
+    // --user is shorthand for --scope user
+    let scope = if args.user {
+        "user".to_string()
+    } else if let Some(ref s) = args.scope {
+        s.clone()
+    } else {
         anyhow::bail!(
-            "specify --user to discover user-level configs\n\
-             (additional discovery modes are planned for future versions)"
+            "specify --scope user (or --user) to discover user-level configs\n\
+             (project-scope discovery planned for future versions)"
         );
+    };
+
+    if scope != "user" {
+        anyhow::bail!("only --scope user is supported currently");
     }
 
     let formats: Vec<Format> = if let Some(ref fmt_arg) = args.format {
