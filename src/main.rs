@@ -369,7 +369,7 @@ mod commands {
                 let act_tag  = format!("{:?}", rule.activation).to_lowercase();
                 let updated  = rule.updated_at.as_deref().unwrap_or("?");
                 let date     = updated.get(..10).unwrap_or(updated);
-                let path     = format!("{}/{}.yml", key, rule.filename_stem());
+                let path     = format!("{}/{}.yaml", key, rule.filename_stem());
 
                 println!(
                     "  {:<W_NAME$}  {:<W_SCOPE$}  {:<W_FMT$}  {:<W_ACT$}  {:<W_DATE$}  {}",
@@ -445,7 +445,7 @@ mod commands {
 
         let stored = store.save_rule_to_namespace(namespace, &args.name, &rule)?;
         println!(
-            "Saved '{}' → {}/{}/{}.yml",
+            "Saved '{}' → {}/{}/{}.yaml",
             args.name, store_path.display(), namespace, args.name
         );
 
