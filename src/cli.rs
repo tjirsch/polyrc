@@ -226,7 +226,7 @@ pub struct ProjectArgs {
 #[derive(Subcommand, Debug)]
 pub enum ProjectCommands {
     /// Rename a project in the store
-    Rename {
+    RenameProject {
         /// Current project name
         old_name: String,
         /// New project name

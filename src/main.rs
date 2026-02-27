@@ -408,7 +408,7 @@ mod commands {
         let store = Store::open(&store_path).context("store not initialized")?;
 
         match args.command {
-            ProjectCommands::Rename { old_name, new_name } => {
+            ProjectCommands::RenameProject { old_name, new_name } => {
                 let old_norm = normalize_project_name(&old_name)
                     .with_context(|| format!("invalid old project name '{}'", old_name))?;
                 let new_norm = normalize_project_name(&new_name)
