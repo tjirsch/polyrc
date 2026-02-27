@@ -10,8 +10,6 @@ use crate::ir::Rule;
 pub const USER_PROJECT: &str = "user";
 /// Legacy name — migrated to USER_PROJECT on first open.
 const USER_PROJECT_LEGACY: &str = "_user";
-/// Directory name for reusable named recipes (pulled into any project on demand).
-pub const PROJECTS_NAMESPACE: &str = "projects";
 
 /// The polyrc local store — a git repo containing IR rules as YAML files.
 pub struct Store {
@@ -144,10 +142,23 @@ impl Store {
         Ok(stored)
     }
 
-    /// Find a rule by name, searching `projects/` then `user/`.
+    /// Find a rule by name. Optionally restrict the search to a specific namespace.
+    /// If `namespace` is None, searches all non-`user/` dirs alphabetically, then `user/`.
     /// Returns `(namespace_key, rule)`.
-    pub fn load_rule_by_name(&self, name: &str) -> Result<Option<(String, Rule)>> {
-        for ns in [PROJECTS_NAMESPACE, USER_PROJECT] {
+    pub fn load_rule_by_name(&self, name: &str, namespace: Option<&str>) -> Result<Option<(String, Rule)>> {
+        let search_order: Vec<String> = if let Some(ns) = namespace {
+            vec![ns.to_string()]
+        } else {
+            let mut all = self.list_projects()?;
+            // Move "user" to the end so named projects are checked first
+            if let Some(pos) = all.iter().position(|n| n == USER_PROJECT) {
+                all.remove(pos);
+                all.push(USER_PROJECT.to_string());
+            }
+            all
+        };
+
+        for ns in &search_order {
             let dir = self.path.join(ns);
             if !dir.exists() {
                 continue;
@@ -162,14 +173,14 @@ impl Store {
                 if stem == name {
                     let raw = fs::read_to_string(p).map_err(|e| PolyrcError::Io { path: p.to_path_buf(), source: e })?;
                     let rule: Rule = serde_yml::from_str(&raw).map_err(|e| PolyrcError::YamlParse { path: p.to_path_buf(), source: e })?;
-                    return Ok(Some((ns.to_string(), rule)));
+                    return Ok(Some((ns.clone(), rule)));
                 }
             }
         }
         Ok(None)
     }
 
-    /// Save a single named rule into the given namespace (`projects` or `user`).
+    /// Save a single named rule into the given namespace (e.g. "user", "myApp").
     /// Returns the stored rule (with id and timestamps set).
     pub fn save_rule_to_namespace(&self, namespace: &str, name: &str, rule: &Rule) -> Result<Rule> {
         let dir = self.path.join(namespace);
@@ -178,7 +189,7 @@ impl Store {
         let now = chrono::Utc::now().to_rfc3339();
 
         // Preserve existing id / created_at if rule already exists
-        let existing = self.load_rule_by_name(name).unwrap_or(None);
+        let existing = self.load_rule_by_name(name, Some(namespace)).unwrap_or(None);
         let mut r = rule.clone();
         r.project = Some(namespace.to_string());
         r.store_version = "1".to_string();
@@ -265,12 +276,10 @@ pub fn init_git(store_path: &Path) -> Result<()> {
         source: e,
     })?;
 
-    // Eagerly create namespace dirs so the store structure is visible immediately.
-    for ns in [USER_PROJECT, PROJECTS_NAMESPACE] {
-        let dir = store_path.join(ns);
-        if !dir.exists() {
-            fs::create_dir_all(&dir).map_err(|e| PolyrcError::Io { path: dir, source: e })?;
-        }
+    // Eagerly create the user/ dir so the store structure is visible immediately.
+    let user_dir = store_path.join(USER_PROJECT);
+    if !user_dir.exists() {
+        fs::create_dir_all(&user_dir).map_err(|e| PolyrcError::Io { path: user_dir, source: e })?;
     }
 
     let git_dir = store_path.join(".git");

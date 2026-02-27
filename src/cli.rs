@@ -62,21 +62,20 @@ pub enum Commands {
     PullFormat(PullFormatArgs),
 
     /// Sync local store with the remote git repo (pull then push)
-    #[command(name = "sync-store", alias = "push-store", alias = "pull-store")]
-    SyncStore,
+    Sync(SyncArgs),
 
     /// Manage projects in the store
     Project(ProjectArgs),
 
-    /// List rules in the store, with optional filters
-    #[command(name = "list-store")]
-    ListStore(ListStoreArgs),
+    /// List projects and rules in the store
+    #[command(name = "list-project")]
+    ListProject(ListProjectArgs),
 
-    /// Push a rule or file into the store library (projects/ or user/)
+    /// Push a rule or file into the store
     #[command(name = "push-rule")]
     PushRule(PushRuleArgs),
 
-    /// Pull a named rule from the store and write it to the current project
+    /// Pull a named rule from the store and write it to disk
     #[command(name = "pull-rule")]
     PullRule(PullRuleArgs),
 
@@ -153,19 +152,19 @@ pub struct PushFormatArgs {
     #[arg(long, value_enum, required_unless_present = "all", conflicts_with = "all")]
     pub format: Option<FormatArg>,
 
-    /// Push all supported formats; each is stored under its format name as namespace
+    /// Push all supported formats
     #[arg(long, conflicts_with = "format")]
     pub all: bool,
 
-    /// Project name to store rules under (ignored when --all is set)
-    #[arg(long)]
+    /// Store rules in user scope (store/user/); reads from the format's user config dir
+    #[arg(long, conflicts_with = "project")]
+    pub user: bool,
+
+    /// Project name to store rules under (e.g. "myApp")
+    #[arg(long, conflicts_with = "user")]
     pub project: Option<String>,
 
-    /// Filter by scope: user, project, or path
-    #[arg(long)]
-    pub scope: Option<String>,
-
-    /// Source project root directory (auto-detected for --scope user when not set)
+    /// Source project root directory (default: current dir; auto-detected for --user)
     #[arg(long, default_value = ".")]
     pub input: PathBuf,
 
@@ -186,21 +185,34 @@ pub struct PullFormatArgs {
     #[arg(long, conflicts_with = "format")]
     pub all: bool,
 
+    /// Load from user scope (store/user/); writes to the format's user config dir
+    #[arg(long, conflicts_with = "project")]
+    pub user: bool,
+
     /// Project name to load rules from
-    #[arg(long)]
+    #[arg(long, conflicts_with = "user")]
     pub project: Option<String>,
 
-    /// Filter by scope: user, project, or path
-    #[arg(long)]
-    pub scope: Option<String>,
-
-    /// Target project root directory (auto-detected for --scope user when not set)
+    /// Target project root directory (default: current dir; auto-detected for --user)
     #[arg(long, default_value = ".")]
     pub output: PathBuf,
 
     /// Print what would be written without modifying local files
     #[arg(long, default_value_t = false)]
     pub dry_run: bool,
+}
+
+// ── sync ──────────────────────────────────────────────────────────────────────
+
+#[derive(clap::Args, Debug)]
+pub struct SyncArgs {
+    /// Only push local commits to the remote (skip pull)
+    #[arg(long, conflicts_with = "pull_only")]
+    pub push_only: bool,
+
+    /// Only pull remote changes (skip push)
+    #[arg(long, conflicts_with = "push_only")]
+    pub pull_only: bool,
 }
 
 // ── project ───────────────────────────────────────────────────────────────────
@@ -213,8 +225,6 @@ pub struct ProjectArgs {
 
 #[derive(Subcommand, Debug)]
 pub enum ProjectCommands {
-    /// List all projects in the store
-    List,
     /// Rename a project in the store
     Rename {
         /// Current project name
@@ -249,27 +259,14 @@ pub struct SetEditorArgs {
     pub clear: bool,
 }
 
-// ── list-store ────────────────────────────────────────────────────────────────
+// ── list-project ──────────────────────────────────────────────────────────────
 
 #[derive(clap::Args, Debug)]
-pub struct ListStoreArgs {
-    /// Only show user-scope rules
-    #[arg(long, conflicts_with = "project")]
-    pub user: bool,
+pub struct ListProjectArgs {
+    /// Project name to inspect. Omit to list all projects.
+    pub name: Option<String>,
 
-    /// Only show rules in the projects library
-    #[arg(long, conflicts_with = "user")]
-    pub projects: bool,
-
-    /// Only show rules matching this name (substring match)
-    #[arg(long)]
-    pub project: Option<String>,
-
-    /// Only show rules whose source format matches (e.g. claude, cursor)
-    #[arg(long, value_enum)]
-    pub format: Option<FormatArg>,
-
-    /// Show full rule content instead of a one-line summary
+    /// Show full rule content (when a name is given) or rule names per project (when listing all)
     #[arg(long)]
     pub verbose: bool,
 }
@@ -281,28 +278,21 @@ pub struct PushRuleArgs {
     /// Name for the rule in the store (e.g. "rust-gitignore")
     pub name: String,
 
-    /// Read rule content from this file (auto-detects format from extension)
+    /// Read rule content from this file
     #[arg(long)]
     pub from_file: Option<std::path::PathBuf>,
 
-    /// Namespace to save into: "projects" (default) or "user"
-    #[arg(long, default_value = "projects")]
-    pub namespace: String,
+    /// Store rule in user scope (store/user/)
+    #[arg(long, conflicts_with = "project")]
+    pub user: bool,
 
-    /// Scope of the rule
-    #[arg(long, value_enum, default_value = "project")]
-    pub scope: ScopeArg,
+    /// Project name to store the rule under (e.g. "myApp")
+    #[arg(long, conflicts_with = "user")]
+    pub project: Option<String>,
 
     /// Activation mode of the rule
     #[arg(long, value_enum, default_value = "always")]
     pub activation: ActivationArg,
-}
-
-#[derive(clap::ValueEnum, Clone, Debug)]
-pub enum ScopeArg {
-    User,
-    Project,
-    Path,
 }
 
 #[derive(clap::ValueEnum, Clone, Debug)]
@@ -323,6 +313,18 @@ pub struct PullRuleArgs {
     /// Target format to write the rule as
     #[arg(long, value_enum, required = true)]
     pub format: FormatArg,
+
+    /// Search in user scope (store/user/)
+    #[arg(long, conflicts_with = "project")]
+    pub user: bool,
+
+    /// Project name to search in (e.g. "myApp")
+    #[arg(long, conflicts_with = "user")]
+    pub project: Option<String>,
+
+    /// Directory to write the rule file into (default: current dir)
+    #[arg(long)]
+    pub output: Option<PathBuf>,
 
     /// Overwrite existing file without asking
     #[arg(long)]
