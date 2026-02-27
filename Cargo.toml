@@ -1,6 +1,6 @@
 [package]
 name = "polyrc"
-version = "0.1.14"
+version = "0.1.15"
 edition = "2024"
 description = "Convert AI coding agent configurations between tools (Cursor, Windsurf, Claude Code, Copilot, etc.)"
 license = "MIT"
