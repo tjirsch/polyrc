@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use crate::error::{PolyrcError, Result};
 use crate::parser::Parser;
 use crate::writer::Writer;
@@ -74,6 +75,32 @@ impl Format {
             Self::Claude      => Box::new(claude::ClaudeWriter),
             Self::Gemini      => Box::new(gemini::GeminiWriter),
             Self::Antigravity => Box::new(antigravity::AntigravityWriter),
+        }
+    }
+
+    /// Returns the directory to pass as `--input` / `--output` when operating in user scope.
+    ///
+    /// `None` means the format has no locally-parseable user-level config
+    /// (e.g. Cursor embeds user rules in a JSON settings file; Copilot is web-UI only).
+    pub fn user_input_dir(&self) -> Option<PathBuf> {
+        let home = dirs::home_dir()?;
+        match self {
+            Self::Claude => {
+                let dir = std::env::var("CLAUDE_CONFIG_DIR")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|_| home.join(".claude"));
+                Some(dir)
+            }
+            // Parser detects GEMINI.md directly in the dir → pass ~/.gemini
+            Self::Gemini => Some(home.join(".gemini")),
+            // Parser detects rules/ directly in the dir → pass ~/.gemini/antigravity
+            Self::Antigravity => Some(home.join(".gemini").join("antigravity")),
+            // Parser detects global_rules.md directly in the dir → pass the memories dir
+            Self::Windsurf => Some(home.join(".codeium").join("windsurf").join("memories")),
+            // User rules embedded in Cursor's settings.json — not parseable as plain files
+            Self::Cursor => None,
+            // User instructions live in the GitHub web UI, no local file
+            Self::Copilot => None,
         }
     }
 

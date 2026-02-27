@@ -14,6 +14,26 @@ pub struct WindsurfWriter;
 
 impl Parser for WindsurfParser {
     fn parse(&self, path: &Path) -> Result<Vec<Rule>> {
+        // User layout: ~/.codeium/windsurf/memories/global_rules.md (single file)
+        let global_rules = path.join("global_rules.md");
+        if global_rules.exists() {
+            let content = fs::read_to_string(&global_rules).map_err(|e| PolyrcError::Io {
+                path: global_rules.clone(),
+                source: e,
+            })?;
+            if content.trim().is_empty() {
+                return Ok(vec![]);
+            }
+            return Ok(vec![Rule {
+                scope: Scope::User,
+                activation: Activation::Always,
+                name: Some("global-rules".to_string()),
+                content: content.trim_end().to_string(),
+                ..Default::default()
+            }]);
+        }
+
+        // Project layout: .windsurf/rules/*.md
         let rules_dir = path.join(".windsurf/rules");
         if !rules_dir.exists() {
             return Ok(vec![]);
@@ -40,9 +60,7 @@ impl Parser for WindsurfParser {
             rules.push(Rule {
                 scope: Scope::Project,
                 activation: Activation::Always,
-                globs: None,
                 name: Some(name),
-                description: None,
                 content: content.trim_end().to_string(),
                 ..Default::default()
             });
@@ -53,6 +71,19 @@ impl Parser for WindsurfParser {
 
 impl Writer for WindsurfWriter {
     fn write(&self, rules: &[Rule], target: &Path) -> Result<()> {
+        // User layout: target is the memories dir → write everything as global_rules.md
+        let is_user = rules.iter().any(|r| r.scope == Scope::User);
+        if is_user {
+            fs::create_dir_all(target).map_err(|e| PolyrcError::Io {
+                path: target.to_path_buf(),
+                source: e,
+            })?;
+            let content = crate::formats::gemini::join_rules(rules);
+            let file = target.join("global_rules.md");
+            return fs::write(&file, content).map_err(|e| PolyrcError::Io { path: file, source: e });
+        }
+
+        // Project layout: .windsurf/rules/*.md (one file per rule)
         let rules_dir = target.join(".windsurf/rules");
         fs::create_dir_all(&rules_dir).map_err(|e| PolyrcError::Io {
             path: rules_dir.clone(),

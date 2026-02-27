@@ -224,9 +224,29 @@ mod commands {
         project_key: Option<&str>,
     ) -> anyhow::Result<usize> {
         let fmt_name = fmt.name();
+        // When --scope user and --input is still the default ".", redirect to the
+        // format's known user config directory (e.g. ~/.claude for Claude).
+        let user_dir;
+        let effective_input: &std::path::Path = if scope.as_deref() == Some("user")
+            && input == std::path::Path::new(".")
+        {
+            match fmt.user_input_dir() {
+                Some(dir) => { user_dir = dir; &user_dir }
+                None => {
+                    eprintln!(
+                        "  {} — skipped (no local user-level config path; use --input to specify)",
+                        fmt_name
+                    );
+                    return Ok(0);
+                }
+            }
+        } else {
+            input
+        };
+
         let parser = fmt.parser();
-        let mut rules = parser.parse(input)
-            .with_context(|| format!("failed to parse {} at {}", fmt_name, input.display()))?;
+        let mut rules = parser.parse(effective_input)
+            .with_context(|| format!("failed to parse {} at {}", fmt_name, effective_input.display()))?;
 
         if let Some(scope_str) = scope {
             let s = parse_scope(scope_str)?;
@@ -288,6 +308,25 @@ mod commands {
         project_key: Option<&str>,
     ) -> anyhow::Result<usize> {
         let fmt_name = fmt.name();
+        // When --scope user and --output is still ".", redirect to the format's user config dir.
+        let user_dir;
+        let effective_output: &std::path::Path = if scope.as_deref() == Some("user")
+            && output == std::path::Path::new(".")
+        {
+            match fmt.user_input_dir() {
+                Some(dir) => { user_dir = dir; &user_dir }
+                None => {
+                    eprintln!(
+                        "  {} — skipped (no local user-level config path; use --output to specify)",
+                        fmt_name
+                    );
+                    return Ok(0);
+                }
+            }
+        } else {
+            output
+        };
+
         let mut rules = store.load_rules(project_key)?;
 
         if let Some(scope_str) = scope {
@@ -306,8 +345,8 @@ mod commands {
         }
 
         let writer = fmt.writer();
-        writer.write(&rules, output)
-            .with_context(|| format!("failed to write {} to {}", fmt_name, output.display()))?;
+        writer.write(&rules, effective_output)
+            .with_context(|| format!("failed to write {} to {}", fmt_name, effective_output.display()))?;
         Ok(rules.len())
     }
 
