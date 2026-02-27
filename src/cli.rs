@@ -91,9 +91,10 @@ pub enum Commands {
     /// Generate shell completion script
     Completion {
         /// Shell to generate completions for: bash, zsh, fish, powershell
+        #[arg(default_value = "zsh")]
         shell: String,
         /// Install the completion script to the default location for the shell
-        #[arg(long)]
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
         install: bool,
     },
 }
