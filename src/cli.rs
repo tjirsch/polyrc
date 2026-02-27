@@ -72,9 +72,9 @@ pub enum Commands {
     #[command(name = "list-store")]
     ListStore(ListStoreArgs),
 
-    /// Save a rule or file into the store library (projects/ or user/)
-    #[command(name = "save-rule")]
-    SaveRule(SaveRuleArgs),
+    /// Push a rule or file into the store library (projects/ or user/)
+    #[command(name = "push-rule")]
+    PushRule(PushRuleArgs),
 
     /// Pull a named rule from the store and write it to the current project
     #[command(name = "pull-rule")]
@@ -274,10 +274,10 @@ pub struct ListStoreArgs {
     pub verbose: bool,
 }
 
-// ── save-rule ─────────────────────────────────────────────────────────────────
+// ── push-rule ─────────────────────────────────────────────────────────────────
 
 #[derive(clap::Args, Debug)]
-pub struct SaveRuleArgs {
+pub struct PushRuleArgs {
     /// Name for the rule in the store (e.g. "rust-gitignore")
     pub name: String,
 

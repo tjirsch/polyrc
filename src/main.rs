@@ -33,7 +33,7 @@ fn main() -> anyhow::Result<()> {
         cli::Commands::PullFormat(a) => commands::pull_format(a)?,
         cli::Commands::SyncStore => commands::sync_store()?,
         cli::Commands::ListStore(a) => commands::list_store(a)?,
-        cli::Commands::SaveRule(a) => commands::save_rule(a)?,
+        cli::Commands::PushRule(a) => commands::push_rule(a)?,
         cli::Commands::PullRule(a) => commands::pull_rule(a)?,
         cli::Commands::Project(a) => commands::project(a)?,
         cli::Commands::Completion { shell, install } => {
@@ -129,7 +129,7 @@ fn completion_install_path(shell: clap_complete::Shell) -> anyhow::Result<(std::
 
 mod commands {
     use anyhow::Context;
-    use crate::cli::{ActivationArg, InitArgs, ListStoreArgs, ProjectArgs, ProjectCommands, PullFormatArgs, PullRuleArgs, PushFormatArgs, SaveRuleArgs, ScopeArg, SetEditorArgs};
+    use crate::cli::{ActivationArg, InitArgs, ListStoreArgs, ProjectArgs, ProjectCommands, PullFormatArgs, PullRuleArgs, PushFormatArgs, PushRuleArgs, ScopeArg, SetEditorArgs};
     use crate::config::Config;
     use crate::formats::Format;
     use crate::ir::Scope;
@@ -469,7 +469,7 @@ mod commands {
         Ok(())
     }
 
-    pub fn save_rule(args: SaveRuleArgs) -> anyhow::Result<()> {
+    pub fn push_rule(args: PushRuleArgs) -> anyhow::Result<()> {
         use crate::ir::{Activation, Rule};
         let config = Config::load()?;
         let store_path = config.store_path();
@@ -512,12 +512,12 @@ mod commands {
 
         let stored = store.save_rule_to_namespace(namespace, &args.name, &rule)?;
         println!(
-            "Saved '{}' → {}/{}/{}.yaml",
+            "Pushed '{}' → {}/{}/{}.yaml",
             args.name, store_path.display(), namespace, args.name
         );
 
         // Auto-commit
-        sync::git_commit(&store_path, &format!("save-rule: {}", args.name))
+        sync::git_commit(&store_path, &format!("push-rule: {}", args.name))
             .context("git commit failed")?;
 
         println!("Stored: {} ({})", stored.name.as_deref().unwrap_or(&args.name), namespace);
