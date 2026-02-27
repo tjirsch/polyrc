@@ -91,27 +91,66 @@ pub fn git_push(store_path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Pull from the configured remote (origin).
+/// Pull remote changes into the store, handling conflicts automatically.
 ///
-/// Fetches first to detect whether the remote has any commits.  If the remote
-/// is empty (freshly initialised), the pull is skipped gracefully so that
-/// `sync-store` does not fail on first use.
+/// Strategy:
+///  1. `git fetch` — not fatal if the remote is offline or empty.
+///  2. If `origin/main` doesn't exist yet the remote is empty; skip pull.
+///  3. If we are already up-to-date; skip merge.
+///  4. `git merge -X ours --no-edit --allow-unrelated-histories origin/main`
+///     — integrates all new files/commits from the remote and auto-resolves
+///     any within-file conflicts by keeping the local version.
+///     `--allow-unrelated-histories` handles remotes that were initialised
+///     independently (e.g. via GitHub's "Add a README" checkbox).
+///  5. On the rare merge failure (binary conflicts, etc.) the merge is aborted
+///     and a clear, actionable error is returned.
 pub fn git_pull(store_path: &Path) -> Result<()> {
-    // A fetch error (e.g. network, empty repo) is not fatal here — we just
-    // won't have anything to merge, which is fine on first init.
+    // Step 1: fetch — not fatal (offline, empty remote, etc.)
     let _ = run_git(&["fetch", "origin"], store_path);
 
-    // Check whether the remote branch actually exists yet.
-    let has_remote = run_git(
-        &["rev-parse", "--verify", "origin/main"],
-        store_path,
-    );
-    if has_remote.is_err() {
-        // Remote is empty or main doesn't exist yet — nothing to pull.
+    // Step 2: skip if remote has no main branch yet (freshly created repo)
+    if run_git(&["rev-parse", "--verify", "origin/main"], store_path).is_err() {
         return Ok(());
     }
 
-    run_git(&["pull", "origin", "main"], store_path)?;
+    // Step 3: skip if already up-to-date
+    let behind = run_git(
+        &["rev-list", "--count", "HEAD..origin/main"],
+        store_path,
+    )
+    .unwrap_or_default();
+    if behind.trim() == "0" {
+        return Ok(());
+    }
+
+    // Step 4: merge, auto-resolving conflicts by preferring the local version
+    // for any conflicting hunks within a file.  New files from either side are
+    // always taken in full — only true per-line conflicts are affected by -X.
+    let merge_result = run_git(
+        &[
+            "merge",
+            "--no-edit",
+            "-X", "ours",
+            "--allow-unrelated-histories",
+            "origin/main",
+        ],
+        store_path,
+    );
+
+    // Step 5: surface unresolvable conflicts clearly
+    if let Err(e) = merge_result {
+        // Leave no partial merge state behind
+        let _ = run_git(&["merge", "--abort"], store_path);
+        return Err(PolyrcError::GitError {
+            msg: format!(
+                "could not auto-merge remote changes into the store.\n\
+                 Run `git -C {} mergetool` to resolve manually, then retry sync-store.\n\
+                 Details: {e}",
+                store_path.display()
+            ),
+        });
+    }
+
     Ok(())
 }
 
