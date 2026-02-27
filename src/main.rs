@@ -168,45 +168,84 @@ mod commands {
         let store_path = config.store_path();
         let store = Store::open(&store_path).context("store not initialized — run `polyrc init` first")?;
 
-        let fmt_name = args.format.as_str();
-        let fmt = Format::from_str(fmt_name)
-            .with_context(|| format!("unknown format '{}'", fmt_name))?;
+        if args.all {
+            let mut pushed_names: Vec<&str> = vec![];
+            for fmt in Format::all() {
+                // Use format name as the namespace so origins stay clear
+                let ns = fmt.name();
+                match push_one(&store, &fmt, &args.input, &args.scope, args.dry_run, Some(ns)) {
+                    Ok(0) => println!("  {} — skipped (no rules found)", fmt.name()),
+                    Ok(n) => {
+                        println!("  {} — {} rule(s) stored in {}/", fmt.name(), n, ns);
+                        pushed_names.push(fmt.name());
+                    }
+                    Err(e) => eprintln!("  {} — error: {:#}", fmt.name(), e),
+                }
+            }
+            if !args.dry_run && !pushed_names.is_empty() {
+                let msg = format!(
+                    "push-format --all ({}) ({})",
+                    pushed_names.join(", "),
+                    chrono::Utc::now().format("%Y-%m-%d")
+                );
+                sync::git_commit(&store_path, &msg).context("git commit failed")?;
+                println!("Committed: {}", msg);
+            }
+        } else {
+            let fmt_arg = args.format.expect("--format is required without --all");
+            let fmt_name = fmt_arg.as_str();
+            let fmt = Format::from_str(fmt_name)
+                .with_context(|| format!("unknown format '{}'", fmt_name))?;
+            let key = project_key(args.project.as_deref(), &args.scope);
+            let n = push_one(&store, &fmt, &args.input, &args.scope, args.dry_run, key.as_deref())?;
+            if n == 0 {
+                eprintln!("warning: no rules found");
+            } else if !args.dry_run {
+                println!("Stored {} rule(s) → {}", n, store_path.display());
+                let msg = format!(
+                    "push-format from {} ({})",
+                    fmt_name,
+                    chrono::Utc::now().format("%Y-%m-%d")
+                );
+                sync::git_commit(&store_path, &msg).context("git commit failed")?;
+                println!("Committed: {}", msg);
+            }
+        }
+        Ok(())
+    }
 
+    /// Push one format into the store. Returns the number of rules stored (0 = nothing to push).
+    fn push_one(
+        store: &Store,
+        fmt: &Format,
+        input: &std::path::Path,
+        scope: &Option<String>,
+        dry_run: bool,
+        project_key: Option<&str>,
+    ) -> anyhow::Result<usize> {
+        let fmt_name = fmt.name();
         let parser = fmt.parser();
-        let mut rules = parser.parse(&args.input)
-            .with_context(|| format!("failed to parse {} at {:?}", fmt_name, args.input))?;
+        let mut rules = parser.parse(input)
+            .with_context(|| format!("failed to parse {} at {}", fmt_name, input.display()))?;
 
-        if let Some(scope_str) = &args.scope {
+        if let Some(scope_str) = scope {
             let s = parse_scope(scope_str)?;
             rules.retain(|r| r.scope == s);
         }
 
         if rules.is_empty() {
-            eprintln!("warning: no rules found");
-            return Ok(());
+            return Ok(0);
         }
 
-        let project_key = project_key(args.project.as_deref(), &args.scope);
-
-        if args.dry_run {
+        if dry_run {
             println!("Dry run: {} rule(s) from {} → store/{}", rules.len(), fmt_name,
-                project_key.as_deref().unwrap_or(store::USER_PROJECT));
+                project_key.unwrap_or(store::USER_PROJECT));
             print_rules_preview(&rules);
-            return Ok(());
+            return Ok(rules.len());
         }
 
-        let stored = store.save_rules(project_key.as_deref(), &rules, fmt_name)?;
-        println!("Stored {} rule(s) → {}", stored.len(), store_path.display());
-
-        // Auto-commit
-        let msg = format!(
-            "push-format from {} ({})",
-            fmt_name,
-            chrono::Utc::now().format("%Y-%m-%d")
-        );
-        sync::git_commit(&store_path, &msg).context("git commit failed")?;
-        println!("Committed: {}", msg);
-        Ok(())
+        let stored = store.save_rules(project_key, &rules, fmt_name)?;
+        Ok(stored.len())
     }
 
     pub fn pull_format(args: PullFormatArgs) -> anyhow::Result<()> {
@@ -214,34 +253,62 @@ mod commands {
         let store_path = config.store_path();
         let store = Store::open(&store_path).context("store not initialized — run `polyrc init` first")?;
 
-        let fmt_name = args.format.as_str();
-        let fmt = Format::from_str(fmt_name)
-            .with_context(|| format!("unknown format '{}'", fmt_name))?;
+        if args.all {
+            for fmt in Format::all() {
+                let key = project_key(args.project.as_deref(), &args.scope);
+                match pull_one(&store, &fmt, &args.output, &args.scope, args.dry_run, key.as_deref()) {
+                    Ok(0) => println!("  {} — skipped (no rules in store)", fmt.name()),
+                    Ok(n) => println!("  {} — wrote {} rule(s)", fmt.name(), n),
+                    Err(e) => eprintln!("  {} — error: {:#}", fmt.name(), e),
+                }
+            }
+        } else {
+            let fmt_arg = args.format.expect("--format is required without --all");
+            let fmt_name = fmt_arg.as_str();
+            let fmt = Format::from_str(fmt_name)
+                .with_context(|| format!("unknown format '{}'", fmt_name))?;
+            let key = project_key(args.project.as_deref(), &args.scope);
+            let n = pull_one(&store, &fmt, &args.output, &args.scope, args.dry_run, key.as_deref())?;
+            if n == 0 {
+                eprintln!("warning: no rules found in store for project {:?}", key);
+            } else {
+                println!("Wrote {} rule(s) as {} to {}", n, fmt_name, args.output.display());
+            }
+        }
+        Ok(())
+    }
 
-        let project_key = project_key(args.project.as_deref(), &args.scope);
-        let mut rules = store.load_rules(project_key.as_deref())?;
+    /// Pull rules from the store and write them as one format. Returns the number of rules written.
+    fn pull_one(
+        store: &Store,
+        fmt: &Format,
+        output: &std::path::Path,
+        scope: &Option<String>,
+        dry_run: bool,
+        project_key: Option<&str>,
+    ) -> anyhow::Result<usize> {
+        let fmt_name = fmt.name();
+        let mut rules = store.load_rules(project_key)?;
 
-        if let Some(scope_str) = &args.scope {
+        if let Some(scope_str) = scope {
             let s = parse_scope(scope_str)?;
             rules.retain(|r| r.scope == s);
         }
 
         if rules.is_empty() {
-            eprintln!("warning: no rules found in store for project {:?}", project_key);
-            return Ok(());
+            return Ok(0);
         }
 
-        if args.dry_run {
+        if dry_run {
             println!("Dry run: {} rule(s) from store → {}", rules.len(), fmt_name);
             print_rules_preview(&rules);
-            return Ok(());
+            return Ok(rules.len());
         }
 
         let writer = fmt.writer();
-        writer.write(&rules, &args.output)
-            .with_context(|| format!("failed to write {} to {:?}", fmt_name, args.output))?;
-        println!("Wrote {} rule(s) as {} to {}", rules.len(), fmt_name, args.output.display());
-        Ok(())
+        writer.write(&rules, output)
+            .with_context(|| format!("failed to write {} to {}", fmt_name, output.display()))?;
+        Ok(rules.len())
     }
 
     pub fn sync_store() -> anyhow::Result<()> {
