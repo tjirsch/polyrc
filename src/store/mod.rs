@@ -62,7 +62,7 @@ impl Store {
                 source: e.into(),
             })?;
             let p = entry.path();
-            if p.extension().and_then(|e| e.to_str()) != Some("yml") {
+            if p.extension().and_then(|e| e.to_str()) != Some("yaml") {
                 continue;
             }
             let raw = fs::read_to_string(p).map_err(|e| PolyrcError::Io {
@@ -94,7 +94,7 @@ impl Store {
         for entry in WalkDir::new(&dir).min_depth(1).max_depth(1) {
             if let Ok(e) = entry {
                 let p = e.path();
-                if p.extension().and_then(|ex| ex.to_str()) == Some("yml") {
+                if p.extension().and_then(|ex| ex.to_str()) == Some("yaml") {
                     fs::remove_file(p).map_err(|err| PolyrcError::Io {
                         path: p.to_path_buf(),
                         source: err,
@@ -129,7 +129,7 @@ impl Store {
             }
             r.updated_at = Some(now.clone());
 
-            let filename = format!("{}.yml", r.filename_stem());
+            let filename = format!("{}.yaml", r.filename_stem());
             let file = dir.join(&filename);
             let content = serde_yml::to_string(&r).map_err(|e| PolyrcError::YamlParse {
                 path: file.clone(),
@@ -155,7 +155,7 @@ impl Store {
             for entry in WalkDir::new(&dir).min_depth(1).max_depth(1).sort_by_file_name() {
                 let entry = entry.map_err(|e| PolyrcError::Io { path: dir.clone(), source: e.into() })?;
                 let p = entry.path();
-                if p.extension().and_then(|e| e.to_str()) != Some("yml") {
+                if p.extension().and_then(|e| e.to_str()) != Some("yaml") {
                     continue;
                 }
                 let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
@@ -196,7 +196,7 @@ impl Store {
         r.updated_at = Some(now);
         if r.name.is_none() { r.name = Some(name.to_string()); }
 
-        let filename = format!("{}.yml", name);
+        let filename = format!("{}.yaml", name);
         let file = dir.join(&filename);
         let content = serde_yml::to_string(&r).map_err(|e| PolyrcError::YamlParse { path: file.clone(), source: e })?;
         fs::write(&file, content).map_err(|e| PolyrcError::Io { path: file, source: e })?;
